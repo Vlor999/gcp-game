@@ -2,18 +2,20 @@
 
 Petit projet Python d'exploration autour de Google Cloud Platform.
 
-Cette première version contient une base minimale pour lancer un script Python et préparer progressivement l'ajout de ressources GCP.
+Ce dépôt sert de base d'onboarding : chaque personne travaille sur sa propre branche et déploie ses propres ressources GCP préfixées par son nom.
 
 ## Objectif
 
 L'objectif du projet est de construire pas à pas un petit jeu ou exercice pratique autour de GCP, en gardant une structure simple et facile à faire évoluer.
 
-Pour l'instant, le projet contient :
+Le projet contient :
 
-- un point d'entrée Python dans `main.py` ;
+- un point d'entrée Python dans `app/main.py` ;
 - une configuration projet dans `pyproject.toml` ;
 - un environnement géré avec `uv` ;
-- une dépendance initiale vers `gcloud`.
+- des dépendances runtime séparées des dépendances de développement ;
+- un template de workflow GCP dans `workflows/weather_pipeline.template.yaml` ;
+- un script de génération dans `scripts/render-workflow.sh`.
 
 ## Prérequis
 
@@ -32,25 +34,109 @@ uv sync
 
 Cette commande installe les dépendances déclarées dans `pyproject.toml` en utilisant le fichier de verrouillage `uv.lock`.
 
-## Lancement
-
-Pour exécuter le script principal :
+Pour installer uniquement les dépendances runtime, comme en déploiement :
 
 ```bash
-uv run python main.py
+uv sync --frozen --no-dev --no-install-project
 ```
 
-Sortie actuelle :
+## Démarrage
+
+### 1. Configurer `.env`
+
+Copie l'exemple :
+
+```bash
+cp .env.example .env
+```
+
+Puis mets à jour au minimum :
+
+```bash
+NAME=<prenom>
+GITHUB_OWNER=<ton-username-github>
+GITHUB_REPO=gcp-game
+PROJECT_ID=onboarding-de
+```
+
+`NAME` doit suivre la convention suivante :
 
 ```text
-Hello from gcp-game!
+minuscules, chiffres, tirets ou underscores
 ```
+
+Exemples valides :
+
+```bash
+willem
+paul
+marie
+```
+
+### 2. Créer la branche et générer le workflow
+
+Lance :
+
+```bash
+make bootstrap
+```
+
+Cette commande :
+
+- lit `NAME` depuis `.env` ;
+- vérifie que ce nom n'est pas déjà utilisé par une autre branche locale ou distante ;
+- crée la branche si elle n'existe pas ;
+- accepte le cas où tu es déjà sur cette branche ;
+- génère `workflows/weather_pipeline.yaml` depuis `workflows/weather_pipeline.template.yaml`.
+
+Par exemple, avec `NAME=willem`, cela produit :
+
+```text
+willem-meteo-ingest
+willem-meteo-pipeline
+willem_bronze
+willem_silver
+willem_gold
+```
+
+Tu peux aussi lancer les étapes séparément :
+
+```bash
+make branch
+make render-workflow
+```
+
+### 3. Lancer le script localement
+
+Authentifie-toi auprès de GCP :
+
+```bash
+gcloud auth application-default login
+```
+
+Puis lance l'ingestion :
+
+```bash
+make run
+```
+
+## Suite du guide
+
+Continue ensuite avec [temp.md](temp.md), qui détaille les étapes GCP : APIs, BigQuery, service accounts, Artifact Registry, Workload Identity Federation, Cloud Run Jobs, Workflows et CI/CD GitHub Actions.
 
 ## Structure du projet
 
 ```text
 .
-├── main.py
+├── app/
+│   └── main.py
+├── scripts/
+│   └── render-workflow.sh
+├── workflows/
+│   ├── weather_pipeline.template.yaml
+│   └── weather_pipeline.yaml
+├── Dockerfile
+├── Makefile
 ├── pyproject.toml
 ├── README.md
 └── uv.lock
@@ -62,16 +148,6 @@ Avant d'ajouter des interactions avec GCP, vérifier que le SDK Google Cloud est
 
 ```bash
 gcloud auth login
-gcloud config set project <PROJECT_ID>
+gcloud config set project "$PROJECT_ID"
 gcloud config list
 ```
-
-Remplacer `<PROJECT_ID>` par l'identifiant du projet GCP cible.
-
-## Prochaines étapes possibles
-
-- Définir le concept exact du jeu ou de l'exercice.
-- Ajouter une configuration explicite pour le projet GCP cible.
-- Remplacer le `Hello from gcp-game!` par une première interaction avec GCP.
-- Ajouter des tests automatisés.
-- Documenter les commandes utiles au fur et à mesure de l'avancement.

@@ -3,25 +3,25 @@ main:
     - run_ingestion:
         call: googleapis.run.v2.projects.locations.jobs.run
         args:
-          name: projects/PROJECT_ID/locations/REGION/jobs/JOB_NAME
+          name: projects/${PROJECT_ID}/locations/${REGION}/jobs/${JOB_NAME}
           body: {}
         result: ingestion_result
 
     - build_silver:
         call: googleapis.bigquery.v2.jobs.query
         args:
-          projectId: PROJECT_ID
+          projectId: ${PROJECT_ID}
           body:
             useLegacySql: false
             query: |
-              CREATE OR REPLACE TABLE `PROJECT_ID.willem_silver.station_weather` AS
+              CREATE OR REPLACE TABLE `${PROJECT_ID}.${BQ_SILVER_DATASET}.${BQ_STATION_WEATHER_TABLE}` AS
               SELECT
                 LOWER(REGEXP_REPLACE(stop_name, r'[^a-zA-Z0-9]+', '_')) AS id,
                 timestamp AS time,
                 temperature,
                 snowfall AS snow,
                 wind_speed AS wind
-              FROM `PROJECT_ID.willem_bronze.stations_weather_raw`
+              FROM `${PROJECT_ID}.${BQ_BRONZE_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}`
               QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY stop_name, timestamp
                 ORDER BY level DESC
@@ -30,17 +30,17 @@ main:
     - build_gold:
         call: googleapis.bigquery.v2.jobs.query
         args:
-          projectId: PROJECT_ID
+          projectId: ${PROJECT_ID}
           body:
             useLegacySql: false
             query: |
-              CREATE OR REPLACE TABLE `PROJECT_ID.willem_gold.summary` AS
+              CREATE OR REPLACE TABLE `${PROJECT_ID}.${BQ_GOLD_DATASET}.${BQ_SUMMARY_TABLE}` AS
               SELECT
                 time,
                 COUNTIF(temperature < -5.0 OR temperature > 40.0) AS temperature_crisis_count,
                 COUNTIF(snow > 5.0) AS snow_crisis_count,
                 COUNTIF(wind > 100.0) AS wind_crisis_count
-              FROM `PROJECT_ID.willem_silver.station_weather`
+              FROM `${PROJECT_ID}.${BQ_SILVER_DATASET}.${BQ_STATION_WEATHER_TABLE}`
               GROUP BY time;
 
     - done:

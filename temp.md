@@ -1,13 +1,3 @@
-Oui. Le chemin le plus propre pour ton “sous-projet” est de **rester dans le projet GCP existant** et de créer des ressources préfixées, par exemple `willem-meteo-*`. GCP ne fait pas vraiment de “projet dans un projet” ; soit tu crées un nouveau project GCP sous une folder, soit tu namespaces proprement dans `onboarding-de`. Je pars sur cette deuxième option.
-
-J’ai essayé de retrouver un repo `onboarding-de` / `onboarding-de` via le connecteur GitHub installé, mais je n’ai rien trouvé, donc je te donne une procédure générique.
-
-## 0. Architecture cible
-
-Tu vas construire ce flux :
-
-`GitHub perso` → `GitHub Actions CI/CD` → `Artifact Registry` → `Cloud Run Job Python` → `BigQuery bronze` → `Workflows` → `BigQuery silver/gold` → `Looker Studio`
-
 GitHub Actions sera ton pipeline CI/CD : un workflow est un fichier YAML dans `.github/workflows` qui se déclenche sur push, manuellement ou selon un schedule. ([GitHub Docs][1])
 Pour l’auth GitHub → GCP, on utilisera **Workload Identity Federation**, pas de clé JSON longue durée : Google recommande cette approche pour éviter la gestion de clés de service account, et l’action officielle `google-github-actions/auth` supporte WIF. ([Google Cloud][2])
 
@@ -21,35 +11,7 @@ Dans Cloud Shell ou ton terminal avec `gcloud` configuré :
 You have those informations on your [.env.example](.env.example).
 You have to copy them on your .env and update them.
 ```bash
-PYTHONPATH=.
-
-NAME=your-name
-GITHUB_OWNER=your-github-username
-GITHUB_REPO=gcp-game
-
-PROJECT_ID=onboarding-de
-
-REGION=europe-west1
-
-PREFIX=${NAME}-meteo
-
-BQ_LOCATION=EU
-JOB_NAME=${PREFIX}-ingest
-WORKFLOW_NAME=${PREFIX}-pipeline
-AR_REPO=${PREFIX}-docker
-BQ_BRONZE_DATASET=${NAME}_bronze
-BQ_SILVER_DATASET=${NAME}_silver
-BQ_GOLD_DATASET=${NAME}_gold
-BQ_STOPS_SNCF_RAW_TABLE=stops_sncf_raw
-BQ_STATIONS_WEATHER_RAW_TABLE=stations_weather_raw
-BQ_STATION_TABLE=station
-BQ_STATION_SNCF_TABLE=station_sncf
-BQ_STATION_WEATHER_TABLE=station_weather
-BQ_SNCF_WEATHER_STATION_TABLE=sncf_weather_station
-BQ_SUMMARY_TABLE=summary
-RUNTIME_SA=${PREFIX}-runtime@${PROJECT_ID}.iam.gserviceaccount.com
-CICD_SA=${PREFIX}-cicd@${PROJECT_ID}.iam.gserviceaccount.com
-WORKFLOW_SA=${PREFIX}-workflow@${PROJECT_ID}.iam.gserviceaccount.com
+cp .env.example .env
 ```
 
 ---
@@ -75,6 +37,7 @@ Please run:
 
 to obtain new credentials.
 ```
+
 Then follow the explained steps.
 At the end verify everything has been properly set with : 
 ```bash
@@ -125,43 +88,31 @@ bq --location="$BQ_LOCATION" mk --dataset "$BQ_BRONZE_DATASET"
 bq --location="$BQ_LOCATION" mk --dataset "$BQ_SILVER_DATASET"
 bq --location="$BQ_LOCATION" mk --dataset "$BQ_GOLD_DATASET"
 ```
+L'utilisation de `$PROJECT_ID` permet de'éviter les erreurs silencieuses et d'être sur que nous créeons au bon endroits.
 
 BigQuery utilise la structure `project.dataset.table`. Il n'est donc pas possible de créer un chemin à quatre niveaux comme `onboarding-de.willem.bronze.stops_sncf_raw`.
 
 Le modèle retenu consiste donc à mettre le nom et la couche dans le dataset :
 
-```text
-onboarding-de.willem_bronze.stops_sncf_raw
-onboarding-de.willem_bronze.stations_weather_raw
-onboarding-de.willem_silver.station
-onboarding-de.willem_silver.station_sncf
-onboarding-de.willem_silver.station_weather
-onboarding-de.willem_gold.sncf_weather_station
-onboarding-de.willem_gold.summary
-```
-
-Répartition des tables :
-
-```text
-Bronze:
-  stops_sncf_raw
-  stations_weather_raw
-
-Silver:
-  station
-  station_sncf
-  station_weather
-
-Gold:
-  sncf_weather_station
-  summary
+```md
+# Bronze layer
+onboarding-de.<name>_bronze.stops_sncf_raw
+onboarding-de.<name>_bronze.stations_weather_raw
+# Silver layer
+onboarding-de.<name>_silver.station
+onboarding-de.<name>_silver.station_sncf
+onboarding-de.<name>_silver.station_weather
+# Gold layer
+onboarding-de.<name>_gold.sncf_weather_station
+onboarding-de.<name>_gold.summary
 ```
 
 Les schémas JSON sont dans `schemas/bigquery/`. Ils suivent la structure documentée dans [tables.md](tables.md).
 
 Pour créer les tables avec ces schémas JSON :
 
-######## expliquer les commandes
+[!Note]
+`bq` permet d'intéragir avec bigquery, en particulier, le flag `mk` permet 
 
 ```bash
 # Bronze
@@ -325,38 +276,75 @@ La doc Artifact Registry montre cette commande `gcloud artifacts repositories cr
 
 ---
 
-## 6. Créer ton repo GitHub perso
+## 6. Créer sa branche de travail
 
-Avec GitHub CLI :
+Le dépôt GitHub existe déjà. Chaque personne doit créer sa propre branche depuis ce dépôt, avec un nom qui correspond à la variable `NAME` dans `.env`.
 
-```bash
-mkdir weather-gcp-game
-cd weather-gcp-game
-git init -b main
+Convention recommandée :
 
-gh repo create "$GITHUB_OWNER/$GITHUB_REPO" \
-  --private \
-  --source=. \
-  --remote=origin
+```text
+<prenom>
 ```
 
-Ou via l’UI GitHub : **New repository**, owner = ton compte perso, nom = `weather-gcp-game`, visibilité private. GitHub permet de créer un repo dans ton compte personnel si tu as les permissions nécessaires, et documente aussi l’option GitHub CLI. ([GitHub Docs][6])
+Exemples :
 
-Structure cible :
+```text
+willem
+paul
+marie
+```
 
-######### attention a la creation du repo
+Après avoir copié `.env.example` vers `.env`, mets à jour au minimum :
+
+```bash
+NAME=<prenom>
+GITHUB_OWNER=<ton-username-github>
+GITHUB_REPO=gcp-game
+PROJECT_ID=onboarding-de
+```
+
+Ensuite lance :
+
+```bash
+make bootstrap
+```
+
+Cette commande :
+
+1. lit `NAME` depuis `.env` ;
+2. vérifie que ce nom n'est pas déjà utilisé par une autre branche locale ou distante ;
+3. crée la branche si elle n'existe pas ;
+4. génère `workflows/weather_pipeline.yaml` depuis le template.
+
+Par exemple, avec `NAME=willem`, les ressources suivront cette convention :
+
+```text
+willem-meteo-ingest
+willem-meteo-pipeline
+willem-meteo-docker
+willem_bronze
+willem_silver
+willem_gold
+```
+
+Structure cible du dépôt :
 
 ```text
 weather-gcp-game/
   app/
     main.py
+  scripts/
+    render-workflow.sh
   workflows/
+    weather_pipeline.template.yaml
     weather_pipeline.yaml
   .github/
     workflows/
       deploy.yml
   Dockerfile
-  requirements.txt
+  Makefile
+  pyproject.toml
+  uv.lock
   README.md
 ```
 
@@ -364,11 +352,39 @@ weather-gcp-game/
 
 ## 7. Ajouter le script Python d’ingestion
 
-Crée `requirements.txt` :
+Les dépendances Python sont gérées uniquement avec `uv`.
 
-```txt
-google-cloud-bigquery>=3.25.0,<4
-requests>=2.32.0,<3
+Ajoute les dépendances dans `pyproject.toml` :
+
+```toml
+[project]
+dependencies = [
+  "google-cloud-bigquery>=3.25.0,<4",
+  "requests>=2.32.0,<3",
+]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.13.0",
+]
+```
+
+Puis mets à jour le lockfile :
+
+```bash
+uv lock
+```
+
+Pour installer l'environnement local de développement :
+
+```bash
+uv sync
+```
+
+Pour installer uniquement les dépendances runtime, comme dans le conteneur de déploiement :
+
+```bash
+uv sync --frozen --no-dev --no-install-project
 ```
 
 Le fichier `app/main.py` ingère une ligne météo courante depuis Open-Meteo et l'insère dans la table bronze `stations_weather_raw`.
@@ -387,8 +403,6 @@ is_fetched
 timestamp
 ```
 
-Les anciennes colonnes d'exemple comme `run_id`, `weather_date`, `temperature_2m_max`, `precipitation_sum` ou `ingestion_ts` ne doivent pas être envoyées vers `stations_weather_raw`.
-
 Le code utilise `insert_rows_json`, qui est l’appel Python documenté par Google pour insérer des lignes JSON dans une table BigQuery. ([Google Cloud][7])
 
 ---
@@ -400,29 +414,32 @@ Crée `Dockerfile` :
 ```dockerfile
 FROM python:3.12-slim
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
 
-COPY app/ .
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-CMD ["python", "main.py"]
+COPY app/ ./app/
+
+CMD [".venv/bin/python", "-m", "app.main"]
 ```
 
 Test local possible :
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 
 gcloud auth application-default login
 
 PROJECT_ID="$PROJECT_ID" \
 BQ_DATASET="$BQ_BRONZE_DATASET" \
 BQ_TABLE="$BQ_STATIONS_WEATHER_RAW_TABLE" \
-python app/main.py
+uv run python -m app.main
 ```
 
 Puis vérifie :
@@ -478,57 +495,19 @@ echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_PO
 
 ## 10. Ajouter le workflow GCP Workflows
 
-Crée `workflows/weather_pipeline.yaml` :
+Le workflow GCP est généré depuis le template :
 
-```yaml
-main:
-  steps:
-    - run_ingestion:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: projects/PROJECT_ID/locations/REGION/jobs/JOB_NAME
-          body: {}
-        result: ingestion_result
-
-    - build_silver:
-        call: googleapis.bigquery.v2.jobs.query
-        args:
-          projectId: PROJECT_ID
-          body:
-            useLegacySql: false
-            query: |
-              CREATE OR REPLACE TABLE `PROJECT_ID.willem_silver.station_weather` AS
-              SELECT
-                LOWER(REGEXP_REPLACE(stop_name, r'[^a-zA-Z0-9]+', '_')) AS id,
-                timestamp AS time,
-                temperature,
-                snowfall AS snow,
-                wind_speed AS wind
-              FROM `PROJECT_ID.willem_bronze.stations_weather_raw`
-              QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY stop_name, timestamp
-                ORDER BY level DESC
-              ) = 1;
-
-    - build_gold:
-        call: googleapis.bigquery.v2.jobs.query
-        args:
-          projectId: PROJECT_ID
-          body:
-            useLegacySql: false
-            query: |
-              CREATE OR REPLACE TABLE `PROJECT_ID.willem_gold.summary` AS
-              SELECT
-                time,
-                COUNTIF(temperature < -5.0 OR temperature > 40.0) AS temperature_crisis_count,
-                COUNTIF(snow > 5.0) AS snow_crisis_count,
-                COUNTIF(wind > 100.0) AS wind_crisis_count
-              FROM `PROJECT_ID.willem_silver.station_weather`
-              GROUP BY time;
-
-    - done:
-        return: "Pipeline completed"
+```text
+workflows/weather_pipeline.template.yaml
 ```
+
+Pour générer `workflows/weather_pipeline.yaml` localement avec les valeurs de `.env` :
+
+```bash
+bash scripts/render-workflow.sh
+```
+
+En CI/CD, le même script génère `/tmp/weather_pipeline.yaml` avec les variables dérivées du nom de branche.
 
 Workflows sait appeler directement Cloud Run Jobs via `googleapis.run.v2.projects.locations.jobs.run`, et ce connecteur attend le nom complet du job `projects/{project}/locations/{location}/jobs/{job}`. ([Google Cloud][8])
 
@@ -536,105 +515,37 @@ Workflows sait appeler directement Cloud Run Jobs via `googleapis.run.v2.project
 
 ## 11. Ajouter la CI/CD GitHub Actions
 
-Crée `.github/workflows/deploy.yml` :
+Le fichier `.github/workflows/deploy.yml` déploie sur chaque branche.
 
-```yaml
-name: Deploy weather pipeline
+Chaque personne peut donc créer sa branche et obtenir des ressources isolées. Le nom du déploiement est dérivé du nom de branche :
 
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  id-token: write
-
-env:
-  PROJECT_ID: onboarding-de
-  REGION: europe-west1
-  AR_REPO: willem-meteo-docker
-  JOB_NAME: willem-meteo-ingest
-  WORKFLOW_NAME: willem-meteo-pipeline
-  BQ_DATASET: willem_bronze
-  BQ_TABLE: stations_weather_raw
-  RUNTIME_SA: willem-meteo-runtime@onboarding-de.iam.gserviceaccount.com
-  WORKFLOW_SA: willem-meteo-workflow@onboarding-de.iam.gserviceaccount.com
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-          workload_identity_provider: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: willem-meteo-cicd@onboarding-de.iam.gserviceaccount.com
-
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Configure Docker auth
-        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-
-      - name: Build and push image
-        run: |
-          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${JOB_NAME}:${GITHUB_SHA}"
-          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
-
-          docker build -t "${IMAGE}" .
-          docker push "${IMAGE}"
-
-      - name: Create or update Cloud Run Job
-        run: |
-          if gcloud run jobs describe "${JOB_NAME}" \
-            --region="${REGION}" \
-            --project="${PROJECT_ID}" >/dev/null 2>&1; then
-
-            gcloud run jobs update "${JOB_NAME}" \
-              --image="${IMAGE}" \
-              --region="${REGION}" \
-              --project="${PROJECT_ID}" \
-              --service-account="${RUNTIME_SA}" \
-              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,DAYS_BACK=7"
-          else
-            gcloud run jobs create "${JOB_NAME}" \
-              --image="${IMAGE}" \
-              --region="${REGION}" \
-              --project="${PROJECT_ID}" \
-              --service-account="${RUNTIME_SA}" \
-              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,DAYS_BACK=7" \
-              --max-retries=0
-          fi
-
-      - name: Deploy Workflows pipeline
-        run: |
-          sed \
-            -e "s/PROJECT_ID/${PROJECT_ID}/g" \
-            -e "s/REGION/${REGION}/g" \
-            -e "s/JOB_NAME/${JOB_NAME}/g" \
-            workflows/weather_pipeline.yaml > /tmp/weather_pipeline.yaml
-
-          gcloud workflows deploy "${WORKFLOW_NAME}" \
-            --location="${REGION}" \
-            --project="${PROJECT_ID}" \
-            --service-account="${WORKFLOW_SA}" \
-            --source=/tmp/weather_pipeline.yaml
+```text
+branche willem
+  -> Artifact Registry: willem-meteo-docker
+  -> Cloud Run Job: willem-meteo-ingest
+  -> Workflow: willem-meteo-pipeline
+  -> BigQuery: willem_bronze, willem_silver, willem_gold
 ```
 
-Remplace dans ce fichier :
+Le workflow peut aussi être lancé manuellement avec `workflow_dispatch` et un input `name`.
 
-```yaml
-PROJECT_NUMBER
-onboarding-de
+La CI/CD :
+
+1. calcule les variables propres à la branche ;
+2. s'authentifie à GCP avec Workload Identity Federation ;
+3. crée le dépôt Artifact Registry s'il n'existe pas ;
+4. crée les datasets et tables BigQuery s'ils n'existent pas ;
+5. build l'image Docker ;
+6. pousse l'image dans Artifact Registry ;
+7. crée ou met à jour le Cloud Run Job ;
+8. génère le workflow GCP avec `scripts/render-workflow.sh` ;
+9. déploie le workflow avec `gcloud workflows deploy`.
+
+Il faut créer une variable GitHub repository-level nommée `WIF_PROVIDER`, avec une valeur comme :
+
+```text
+projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/providers/github-provider
 ```
-
-par les vraies valeurs si besoin.
 
 ---
 
