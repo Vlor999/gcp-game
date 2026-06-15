@@ -1,0 +1,20 @@
+[
+  {
+    "name": "id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Deterministic slugified ID"
+  },
+  {
+    "name": "lat",
+    "type": "FLOAT64",
+    "mode": "REQUIRED",
+    "description": "Averaged latitude coordinates"
+  },
+  {
+    "name": "long",
+    "type": "FLOAT64",
+    "mode": "REQUIRED",
+    "description": "Averaged longitude coordinates"
+  }
+]

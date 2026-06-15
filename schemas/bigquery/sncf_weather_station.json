@@ -1,0 +1,44 @@
+[
+  {
+    "name": "name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Displays the railway station name"
+  },
+  {
+    "name": "time",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "YYYY-MM-DD HH:MM:SS snapshot time"
+  },
+  {
+    "name": "lat",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Station latitude"
+  },
+  {
+    "name": "long",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Station longitude"
+  },
+  {
+    "name": "is_temperature_extreme",
+    "type": "BOOLEAN",
+    "mode": "NULLABLE",
+    "description": "Flagged if temperature is lower than -5.0 or higher than 40.0"
+  },
+  {
+    "name": "is_snow_extreme",
+    "type": "BOOLEAN",
+    "mode": "NULLABLE",
+    "description": "Flagged if snowfall is higher than 5.0"
+  },
+  {
+    "name": "is_wind_extreme",
+    "type": "BOOLEAN",
+    "mode": "NULLABLE",
+    "description": "Flagged if wind speed is higher than 100.0"
+  }
+]

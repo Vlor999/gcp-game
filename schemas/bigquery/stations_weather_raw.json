@@ -1,0 +1,56 @@
+[
+  {
+    "name": "stop_name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Raw name of the railway station"
+  },
+  {
+    "name": "stop_lat",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Latitude of the weather coordinate"
+  },
+  {
+    "name": "stop_lon",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Longitude of the weather coordinate"
+  },
+  {
+    "name": "level",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Partition grid level, from coarse to fine multi-resolution"
+  },
+  {
+    "name": "temperature",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Temperature metric in Celsius"
+  },
+  {
+    "name": "snowfall",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Snowfall amount"
+  },
+  {
+    "name": "wind_speed",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Wind speed amount"
+  },
+  {
+    "name": "is_fetched",
+    "type": "BOOLEAN",
+    "mode": "NULLABLE",
+    "description": "True if fetched from Open-Meteo in the current batch"
+  },
+  {
+    "name": "timestamp",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "YYYY-MM-DD HH:MM:SS timestamp of the data snapshot"
+  }
+]

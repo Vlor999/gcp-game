@@ -1,0 +1,26 @@
+[
+  {
+    "name": "time",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Snapshot interval timestamp"
+  },
+  {
+    "name": "temperature_crisis_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Count of stations under extreme temperature"
+  },
+  {
+    "name": "snow_crisis_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Count of stations under extreme snow"
+  },
+  {
+    "name": "wind_crisis_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Count of stations under extreme wind"
+  }
+]

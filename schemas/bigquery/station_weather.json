@@ -1,0 +1,32 @@
+[
+  {
+    "name": "id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Clean station identifier"
+  },
+  {
+    "name": "time",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Snapshot timestamp"
+  },
+  {
+    "name": "temperature",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Temperature in Celsius"
+  },
+  {
+    "name": "snow",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Snowfall metric"
+  },
+  {
+    "name": "wind",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Wind speed metric"
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "stop_name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Raw name of the railway station"
+  },
+  {
+    "name": "stop_lat",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Latitude of the railway station stop"
+  },
+  {
+    "name": "stop_lon",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Longitude of the railway station stop"
+  },
+  {
+    "name": "country_code",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Country ISO code, for example FR, DE, ES"
+  }
+]
