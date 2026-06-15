@@ -16,6 +16,7 @@ Pour l’auth GitHub → GCP, on utilisera **Workload Identity Federation**, pas
 ## 1. Variables de base
 
 Dans Cloud Shell ou ton terminal avec `gcloud` configuré :
+##### télécharger gcloud 
 
 You have those informations on your [.env.example](.env.example).
 You have to copy them on your .env and update them.
@@ -36,7 +37,9 @@ BQ_LOCATION=EU
 JOB_NAME=${PREFIX}-ingest
 WORKFLOW_NAME=${PREFIX}-pipeline
 AR_REPO=${PREFIX}-docker
-BQ_DATASET=${NAME}
+BQ_BRONZE_DATASET=${NAME}_bronze
+BQ_SILVER_DATASET=${NAME}_silver
+BQ_GOLD_DATASET=${NAME}_gold
 BQ_STOPS_SNCF_RAW_TABLE=stops_sncf_raw
 BQ_STATIONS_WEATHER_RAW_TABLE=stations_weather_raw
 BQ_STATION_TABLE=station
@@ -111,57 +114,93 @@ Cloud Run Jobs est adapté ici parce que ton ingestion météo est un batch, pas
 
 ---
 
-## 3. Créer le dataset et les tables BigQuery
+## 3. Créer les datasets et les tables BigQuery
 
 ```bash
-bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_DATASET"
+bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_BRONZE_DATASET"
+bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_SILVER_DATASET"
+bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_GOLD_DATASET"
+# or
+bq --location="$BQ_LOCATION" mk --dataset "$BQ_BRONZE_DATASET"
+bq --location="$BQ_LOCATION" mk --dataset "$BQ_SILVER_DATASET"
+bq --location="$BQ_LOCATION" mk --dataset "$BQ_GOLD_DATASET"
 ```
 
-BigQuery utilise la structure `project.dataset.table`. Avec les variables ci-dessus, tu obtiens donc :
+BigQuery utilise la structure `project.dataset.table`. Il n'est donc pas possible de créer un chemin à quatre niveaux comme `onboarding-de.willem.bronze.stops_sncf_raw`.
+
+Le modèle retenu consiste donc à mettre le nom et la couche dans le dataset :
 
 ```text
-onboarding-de.willem.stops_sncf_raw
-onboarding-de.willem.stations_weather_raw
-onboarding-de.willem.station
-onboarding-de.willem.station_sncf
-onboarding-de.willem.station_weather
-onboarding-de.willem.sncf_weather_station
-onboarding-de.willem.summary
+onboarding-de.willem_bronze.stops_sncf_raw
+onboarding-de.willem_bronze.stations_weather_raw
+onboarding-de.willem_silver.station
+onboarding-de.willem_silver.station_sncf
+onboarding-de.willem_silver.station_weather
+onboarding-de.willem_gold.sncf_weather_station
+onboarding-de.willem_gold.summary
 ```
 
-Les schemas JSON sont dans `schemas/bigquery/`. Ils suivent la structure documentée dans [tables.md](tables.md).
+Répartition des tables :
 
-Pour créer les tables avec ces schemas JSON :
+```text
+Bronze:
+  stops_sncf_raw
+  stations_weather_raw
+
+Silver:
+  station
+  station_sncf
+  station_weather
+
+Gold:
+  sncf_weather_station
+  summary
+```
+
+Les schémas JSON sont dans `schemas/bigquery/`. Ils suivent la structure documentée dans [tables.md](tables.md).
+
+Pour créer les tables avec ces schémas JSON :
+
+######## expliquer les commandes
 
 ```bash
-bq mk --table "$PROJECT_ID:$BQ_DATASET.$BQ_STOPS_SNCF_RAW_TABLE" \
+# Bronze
+bq mk --table "$PROJECT_ID:$BQ_BRONZE_DATASET.$BQ_STOPS_SNCF_RAW_TABLE" \
   schemas/bigquery/stops_sncf_raw.json
 
-bq mk --table "$PROJECT_ID:$BQ_DATASET.$BQ_STATIONS_WEATHER_RAW_TABLE" \
+bq mk --table "$PROJECT_ID:$BQ_BRONZE_DATASET.$BQ_STATIONS_WEATHER_RAW_TABLE" \
   schemas/bigquery/stations_weather_raw.json
 
-bq mk --table "$PROJECT_ID:$BQ_DATASET.$BQ_STATION_TABLE" \
+# Silver
+bq mk --table "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_TABLE" \
   schemas/bigquery/station.json
 
-bq mk --table "$PROJECT_ID:$BQ_DATASET.$BQ_STATION_SNCF_TABLE" \
+bq mk --table "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_SNCF_TABLE" \
   schemas/bigquery/station_sncf.json
 
-bq mk --table "$PROJECT_ID:$BQ_DATASET.$BQ_STATION_WEATHER_TABLE" \
+bq mk --table "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_WEATHER_TABLE" \
   schemas/bigquery/station_weather.json
 
-bq mk --table "$PROJECT_ID:$BQ_DATASET.$BQ_SNCF_WEATHER_STATION_TABLE" \
+# Gold
+bq mk --table "$PROJECT_ID:$BQ_GOLD_DATASET.$BQ_SNCF_WEATHER_STATION_TABLE" \
   schemas/bigquery/sncf_weather_station.json
 
-bq mk --table "$PROJECT_ID:$BQ_DATASET.$BQ_SUMMARY_TABLE" \
+bq mk --table "$PROJECT_ID:$BQ_GOLD_DATASET.$BQ_SUMMARY_TABLE" \
   schemas/bigquery/summary.json
 ```
 
-Note : BigQuery ne force pas les clés primaires et étrangères avec un simple fichier de schema JSON `bq mk`. Les contraintes documentées dans `tables.md` doivent donc être appliquées dans les transformations SQL, les tests de qualité ou via des `ALTER TABLE ... ADD PRIMARY KEY / FOREIGN KEY NOT ENFORCED` si tu veux les déclarer explicitement.
+Note : BigQuery ne force pas les clés primaires et étrangères avec un simple fichier de schéma JSON `bq mk`. Les contraintes documentées dans `tables.md` doivent donc être appliquées dans les transformations SQL, les tests de qualité ou via des `ALTER TABLE ... ADD PRIMARY KEY / FOREIGN KEY NOT ENFORCED` si tu veux les déclarer explicitement.
 
 Tu peux vérifier la création avec :
 
 ```bash
-bq ls "$PROJECT_ID:$BQ_DATASET"
+bq ls "$PROJECT_ID:$BQ_BRONZE_DATASET"
+bq ls "$PROJECT_ID:$BQ_SILVER_DATASET"
+bq ls "$PROJECT_ID:$BQ_GOLD_DATASET"
+# or 
+bq ls "$BQ_BRONZE_DATASET"
+bq ls "$BQ_SILVER_DATASET"
+bq ls "$BQ_GOLD_DATASET"
 ```
 
 ### 3.1 Supprimer une table si besoin
@@ -169,24 +208,26 @@ bq ls "$PROJECT_ID:$BQ_DATASET"
 Si tu veux supprimer une table précise, utilise `bq rm -t` :
 
 ```bash
-bq rm -f -t "$PROJECT_ID:$BQ_DATASET.$BQ_STOPS_SNCF_RAW_TABLE"
+bq rm -f -t "$PROJECT_ID:$BQ_BRONZE_DATASET.$BQ_STOPS_SNCF_RAW_TABLE"
 ```
 
 Même logique pour les autres tables :
 
 ```bash
-bq rm -f -t "$PROJECT_ID:$BQ_DATASET.$BQ_STATIONS_WEATHER_RAW_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_DATASET.$BQ_STATION_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_DATASET.$BQ_STATION_SNCF_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_DATASET.$BQ_STATION_WEATHER_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_DATASET.$BQ_SNCF_WEATHER_STATION_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_DATASET.$BQ_SUMMARY_TABLE"
+bq rm -f -t "$PROJECT_ID:$BQ_BRONZE_DATASET.$BQ_STATIONS_WEATHER_RAW_TABLE"
+bq rm -f -t "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_TABLE"
+bq rm -f -t "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_SNCF_TABLE"
+bq rm -f -t "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_WEATHER_TABLE"
+bq rm -f -t "$PROJECT_ID:$BQ_GOLD_DATASET.$BQ_SNCF_WEATHER_STATION_TABLE"
+bq rm -f -t "$PROJECT_ID:$BQ_GOLD_DATASET.$BQ_SUMMARY_TABLE"
 ```
 
 Si tu veux supprimer tout le dataset et toutes ses tables, utilise `bq rm -r -d` :
 
 ```bash
-bq rm -r -f -d "$PROJECT_ID:$BQ_DATASET"
+bq rm -r -f -d "$PROJECT_ID:$BQ_BRONZE_DATASET"
+bq rm -r -f -d "$PROJECT_ID:$BQ_SILVER_DATASET"
+bq rm -r -f -d "$PROJECT_ID:$BQ_GOLD_DATASET"
 ```
 
 
@@ -195,7 +236,9 @@ BigQuery recommande de choisir la localisation du dataset à la création, car e
 ---
 
 ## 4. Créer les service accounts
-
+### max
+######## renaming et documentation entre les deux objets
+######## ⚠️ permissions
 ```bash
 gcloud iam service-accounts create "${PREFIX}-runtime" \
   --display-name="Runtime SA for weather ingestion"
@@ -272,6 +315,7 @@ gcloud artifacts repositories create "$AR_REPO" \
   --description="Docker images for weather GCP onboarding" \
   --project="$PROJECT_ID"
 ```
+######### doc qu'est ce que c'est que ça
 
 ```bash
 gcloud auth configure-docker "${REGION}-docker.pkg.dev"
@@ -300,6 +344,8 @@ Ou via l’UI GitHub : **New repository**, owner = ton compte perso, nom = `weat
 
 Structure cible :
 
+######### attention a la creation du repo
+
 ```text
 weather-gcp-game/
   app/
@@ -325,113 +371,23 @@ google-cloud-bigquery>=3.25.0,<4
 requests>=2.32.0,<3
 ```
 
-Crée `app/main.py` :
+Le fichier `app/main.py` ingère une ligne météo courante depuis Open-Meteo et l'insère dans la table bronze `stations_weather_raw`.
 
-```python
-import datetime as dt
-import os
-import uuid
+Il doit produire des lignes compatibles avec le schéma `schemas/bigquery/stations_weather_raw.json` :
 
-import requests
-from google.api_core.exceptions import NotFound
-from google.cloud import bigquery
-
-
-PROJECT_ID = os.environ["PROJECT_ID"]
-BQ_DATASET = os.environ.get("BQ_DATASET", "willem")
-BQ_TABLE = os.environ.get("BQ_TABLE", "stations_weather_raw")
-
-CITY = os.environ.get("CITY", "Paris")
-LAT = float(os.environ.get("LAT", "48.8566"))
-LON = float(os.environ.get("LON", "2.3522"))
-DAYS_BACK = int(os.environ.get("DAYS_BACK", "7"))
-
-RUN_ID = os.environ.get("RUN_ID", str(uuid.uuid4()))
-
-
-def ensure_table(client: bigquery.Client, table_id: str) -> None:
-    schema = [
-        bigquery.SchemaField("run_id", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("city", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("latitude", "FLOAT", mode="REQUIRED"),
-        bigquery.SchemaField("longitude", "FLOAT", mode="REQUIRED"),
-        bigquery.SchemaField("weather_date", "DATE", mode="REQUIRED"),
-        bigquery.SchemaField("temperature_2m_max", "FLOAT"),
-        bigquery.SchemaField("temperature_2m_min", "FLOAT"),
-        bigquery.SchemaField("precipitation_sum", "FLOAT"),
-        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
-        bigquery.SchemaField("ingestion_ts", "TIMESTAMP", mode="REQUIRED"),
-    ]
-
-    try:
-        client.get_table(table_id)
-        print(f"Table already exists: {table_id}")
-    except NotFound:
-        table = bigquery.Table(table_id, schema=schema)
-        table.time_partitioning = bigquery.TimePartitioning(
-            type_=bigquery.TimePartitioningType.DAY,
-            field="weather_date",
-        )
-        client.create_table(table)
-        print(f"Created table: {table_id}")
-
-
-def fetch_weather() -> list[dict]:
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": LAT,
-        "longitude": LON,
-        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
-        "timezone": "auto",
-        "past_days": DAYS_BACK,
-        "forecast_days": 1,
-    }
-
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-
-    daily = payload["daily"]
-    now = dt.datetime.now(dt.timezone.utc).isoformat()
-
-    rows = []
-    for i, weather_date in enumerate(daily["time"]):
-        rows.append(
-            {
-                "run_id": RUN_ID,
-                "city": CITY,
-                "latitude": LAT,
-                "longitude": LON,
-                "weather_date": weather_date,
-                "temperature_2m_max": daily["temperature_2m_max"][i],
-                "temperature_2m_min": daily["temperature_2m_min"][i],
-                "precipitation_sum": daily["precipitation_sum"][i],
-                "source": "open-meteo",
-                "ingestion_ts": now,
-            }
-        )
-
-    return rows
-
-
-def main() -> None:
-    client = bigquery.Client(project=PROJECT_ID)
-    table_id = f"{PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}"
-
-    ensure_table(client, table_id)
-
-    rows = fetch_weather()
-    errors = client.insert_rows_json(table_id, rows)
-
-    if errors:
-        raise RuntimeError(f"BigQuery insert errors: {errors}")
-
-    print(f"Inserted {len(rows)} rows into {table_id}")
-
-
-if __name__ == "__main__":
-    main()
+```text
+stop_name
+stop_lat
+stop_lon
+level
+temperature
+snowfall
+wind_speed
+is_fetched
+timestamp
 ```
+
+Les anciennes colonnes d'exemple comme `run_id`, `weather_date`, `temperature_2m_max`, `precipitation_sum` ou `ingestion_ts` ne doivent pas être envoyées vers `stations_weather_raw`.
 
 Le code utilise `insert_rows_json`, qui est l’appel Python documenté par Google pour insérer des lignes JSON dans une table BigQuery. ([Google Cloud][7])
 
@@ -464,7 +420,7 @@ pip install -r requirements.txt
 gcloud auth application-default login
 
 PROJECT_ID="$PROJECT_ID" \
-BQ_DATASET="$BQ_DATASET" \
+BQ_DATASET="$BQ_BRONZE_DATASET" \
 BQ_TABLE="$BQ_STATIONS_WEATHER_RAW_TABLE" \
 python app/main.py
 ```
@@ -474,7 +430,7 @@ Puis vérifie :
 ```bash
 bq query --use_legacy_sql=false "
 SELECT *
-FROM \`${PROJECT_ID}.${BQ_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}\`
+FROM \`${PROJECT_ID}.${BQ_BRONZE_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}\`
 LIMIT 10
 "
 ```
@@ -541,14 +497,14 @@ main:
           body:
             useLegacySql: false
             query: |
-              CREATE OR REPLACE TABLE `PROJECT_ID.willem.station_weather` AS
+              CREATE OR REPLACE TABLE `PROJECT_ID.willem_silver.station_weather` AS
               SELECT
                 LOWER(REGEXP_REPLACE(stop_name, r'[^a-zA-Z0-9]+', '_')) AS id,
                 timestamp AS time,
                 temperature,
                 snowfall AS snow,
                 wind_speed AS wind
-              FROM `PROJECT_ID.willem.stations_weather_raw`
+              FROM `PROJECT_ID.willem_bronze.stations_weather_raw`
               QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY stop_name, timestamp
                 ORDER BY level DESC
@@ -561,13 +517,13 @@ main:
           body:
             useLegacySql: false
             query: |
-              CREATE OR REPLACE TABLE `PROJECT_ID.willem.summary` AS
+              CREATE OR REPLACE TABLE `PROJECT_ID.willem_gold.summary` AS
               SELECT
                 time,
                 COUNTIF(temperature < -5.0 OR temperature > 40.0) AS temperature_crisis_count,
                 COUNTIF(snow > 5.0) AS snow_crisis_count,
                 COUNTIF(wind > 100.0) AS wind_crisis_count
-              FROM `PROJECT_ID.willem.station_weather`
+              FROM `PROJECT_ID.willem_silver.station_weather`
               GROUP BY time;
 
     - done:
@@ -600,7 +556,7 @@ env:
   AR_REPO: willem-meteo-docker
   JOB_NAME: willem-meteo-ingest
   WORKFLOW_NAME: willem-meteo-pipeline
-  BQ_DATASET: willem
+  BQ_DATASET: willem_bronze
   BQ_TABLE: stations_weather_raw
   RUNTIME_SA: willem-meteo-runtime@onboarding-de.iam.gserviceaccount.com
   WORKFLOW_SA: willem-meteo-workflow@onboarding-de.iam.gserviceaccount.com
@@ -718,7 +674,7 @@ Vérifie les tables BigQuery :
 ```bash
 bq query --use_legacy_sql=false "
 SELECT *
-FROM \`${PROJECT_ID}.${BQ_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}\`
+FROM \`${PROJECT_ID}.${BQ_BRONZE_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}\`
 LIMIT 10
 "
 ```
@@ -726,7 +682,7 @@ LIMIT 10
 ```bash
 bq query --use_legacy_sql=false "
 SELECT *
-FROM \`${PROJECT_ID}.${BQ_DATASET}.${BQ_STATION_WEATHER_TABLE}\`
+FROM \`${PROJECT_ID}.${BQ_SILVER_DATASET}.${BQ_STATION_WEATHER_TABLE}\`
 LIMIT 10
 "
 ```
@@ -734,7 +690,7 @@ LIMIT 10
 ```bash
 bq query --use_legacy_sql=false "
 SELECT *
-FROM \`${PROJECT_ID}.${BQ_DATASET}.${BQ_SUMMARY_TABLE}\`
+FROM \`${PROJECT_ID}.${BQ_GOLD_DATASET}.${BQ_SUMMARY_TABLE}\`
 "
 ```
 
@@ -758,7 +714,7 @@ Exemple `definitions/silver_station_weather.sqlx` :
 ```sql
 config {
   type: "table",
-  schema: "willem",
+  schema: "willem_silver",
   name: "station_weather"
 }
 
@@ -768,7 +724,7 @@ SELECT
   temperature,
   snowfall AS snow,
   wind_speed AS wind
-FROM `${dataform.projectConfig.defaultDatabase}.willem.stations_weather_raw`
+FROM `${dataform.projectConfig.defaultDatabase}.willem_bronze.stations_weather_raw`
 QUALIFY ROW_NUMBER() OVER (
   PARTITION BY stop_name, timestamp
   ORDER BY level DESC
@@ -780,7 +736,7 @@ Exemple `definitions/gold_summary.sqlx` :
 ```sql
 config {
   type: "table",
-  schema: "willem",
+  schema: "willem_gold",
   name: "summary"
 }
 
@@ -806,7 +762,7 @@ Tu pourrais alors laisser Workflows faire :
 Dans Looker Studio, connecte une source BigQuery vers :
 
 ```text
-onboarding-de.willem.summary
+onboarding-de.willem_gold.summary
 ```
 
 Le connecteur BigQuery est documenté côté Looker Studio dans la section “Connect to BigQuery”. ([Aide Google][10])
@@ -839,7 +795,9 @@ gcloud artifacts repositories delete "$AR_REPO" \
   --location="$REGION" \
   --project="$PROJECT_ID"
 
-bq rm -r -f "$PROJECT_ID:$BQ_DATASET"
+bq rm -r -f "$PROJECT_ID:$BQ_BRONZE_DATASET"
+bq rm -r -f "$PROJECT_ID:$BQ_SILVER_DATASET"
+bq rm -r -f "$PROJECT_ID:$BQ_GOLD_DATASET"
 ```
 
 Le premier objectif est d’obtenir ce run complet : **push GitHub → image Docker → Cloud Run Job → BigQuery bronze → SQL silver/gold → table dashboardable**. Ensuite seulement, ajoute Dataform proprement.

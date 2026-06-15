@@ -1,0 +1,86 @@
+name: Deploy weather pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: onboarding-de
+  REGION: europe-west1
+  AR_REPO: willem-meteo-docker
+  JOB_NAME: willem-meteo-ingest
+  WORKFLOW_NAME: willem-meteo-pipeline
+  BQ_DATASET: willem_bronze
+  BQ_TABLE: stations_weather_raw
+  RUNTIME_SA: willem-meteo-runtime@onboarding-de.iam.gserviceaccount.com
+  WORKFLOW_SA: willem-meteo-workflow@onboarding-de.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: willem-meteo-cicd@onboarding-de.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${JOB_NAME}:${GITHUB_SHA}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+
+          docker build -t "${IMAGE}" .
+          docker push "${IMAGE}"
+
+      - name: Create or update Cloud Run Job
+        run: |
+          if gcloud run jobs describe "${JOB_NAME}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" >/dev/null 2>&1; then
+
+            gcloud run jobs update "${JOB_NAME}" \
+              --image="${IMAGE}" \
+              --region="${REGION}" \
+              --project="${PROJECT_ID}" \
+              --service-account="${RUNTIME_SA}" \
+              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,DAYS_BACK=7"
+          else
+            gcloud run jobs create "${JOB_NAME}" \
+              --image="${IMAGE}" \
+              --region="${REGION}" \
+              --project="${PROJECT_ID}" \
+              --service-account="${RUNTIME_SA}" \
+              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,DAYS_BACK=7" \
+              --max-retries=0
+          fi
+
+      - name: Deploy Workflows pipeline
+        run: |
+          sed \
+            -e "s/PROJECT_ID/${PROJECT_ID}/g" \
+            -e "s/REGION/${REGION}/g" \
+            -e "s/JOB_NAME/${JOB_NAME}/g" \
+            workflows/weather_pipeline.yaml > /tmp/weather_pipeline.yaml
+
+          gcloud workflows deploy "${WORKFLOW_NAME}" \
+            --location="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --service-account="${WORKFLOW_SA}" \
+            --source=/tmp/weather_pipeline.yaml
