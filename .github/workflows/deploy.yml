@@ -43,9 +43,17 @@ jobs:
             RAW_NAME="${GITHUB_REF_NAME##*/}"
           fi
 
+          # Extract project ID from service account email (e.g., prefix-cicd@project-id.iam.gserviceaccount.com)
+          SA_EMAIL="${{ vars.GCP_SERVICE_ACCOUNT }}"
+          RESOLVED_PROJECT_ID="${SA_EMAIL#*@}"
+          RESOLVED_PROJECT_ID="${RESOLVED_PROJECT_ID%.iam.gserviceaccount.com}"
+
+          if [[ -z "${RESOLVED_PROJECT_ID}" ]]; then
+            RESOLVED_PROJECT_ID="${PROJECT_ID}"
+          fi
+
           # If pushing to main/master, fallback to name extracted from the service account
           if [[ "${RAW_NAME}" == "main" || "${RAW_NAME}" == "master" ]]; then
-            SA_EMAIL="${{ vars.GCP_SERVICE_ACCOUNT }}"
             if [[ -n "${SA_EMAIL}" ]]; then
               RAW_NAME="${SA_EMAIL%%-meteo-cicd*}"
             fi
@@ -62,6 +70,7 @@ jobs:
           PREFIX="${NAME_DASH}-meteo"
 
           {
+            echo "PROJECT_ID=${RESOLVED_PROJECT_ID}"
             echo "NAME=${NAME_UNDERSCORE}"
             echo "PREFIX=${PREFIX}"
             echo "AR_REPO=${PREFIX}-docker"
@@ -72,14 +81,15 @@ jobs:
             echo "BQ_GOLD_DATASET=${NAME_UNDERSCORE}_gold"
             echo "BQ_DATASET=${NAME_UNDERSCORE}_bronze"
             echo "BQ_TABLE=${BQ_STATIONS_WEATHER_RAW_TABLE}"
-            echo "RUNTIME_SA=${PREFIX}-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
-            echo "CICD_SA=${PREFIX}-cicd@${PROJECT_ID}.iam.gserviceaccount.com"
-            echo "WORKFLOW_SA=${PREFIX}-workflow@${PROJECT_ID}.iam.gserviceaccount.com"
+            echo "RUNTIME_SA=${PREFIX}-runtime@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
+            echo "CICD_SA=${PREFIX}-cicd@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
+            echo "WORKFLOW_SA=${PREFIX}-workflow@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
           } >> "$GITHUB_ENV"
 
           {
-            echo "cicd_sa=${PREFIX}-cicd@${PROJECT_ID}.iam.gserviceaccount.com"
+            echo "cicd_sa=${PREFIX}-cicd@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
           } >> "$GITHUB_OUTPUT"
+
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
