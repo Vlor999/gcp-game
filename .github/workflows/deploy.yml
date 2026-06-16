@@ -15,7 +15,7 @@ permissions:
   id-token: write
 
 env:
-  PROJECT_ID: onboarding-de
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   REGION: europe-west1
   BQ_LOCATION: EU
   BQ_STOPS_SNCF_RAW_TABLE: stops_sncf_raw
@@ -41,6 +41,14 @@ jobs:
           RAW_NAME="${{ inputs.name }}"
           if [[ -z "${RAW_NAME}" ]]; then
             RAW_NAME="${GITHUB_REF_NAME##*/}"
+          fi
+
+          # If pushing to main/master, fallback to name extracted from the service account
+          if [[ "${RAW_NAME}" == "main" || "${RAW_NAME}" == "master" ]]; then
+            SA_EMAIL="${{ vars.GCP_SERVICE_ACCOUNT }}"
+            if [[ -n "${SA_EMAIL}" ]]; then
+              RAW_NAME="${SA_EMAIL%%-meteo-cicd*}"
+            fi
           fi
 
           NAME_UNDERSCORE="$(echo "${RAW_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+|_+$//g')"
