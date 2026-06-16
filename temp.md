@@ -275,7 +275,7 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${CICD_SA}" \
-  --role="roles/workflows.developer"
+  --role="roles/workflows.editor"
 
 gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
   --member="serviceAccount:${CICD_SA}" \
