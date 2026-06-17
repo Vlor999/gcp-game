@@ -1,6 +1,6 @@
 config {
   type: "table",
-  schema: "willem_gold",
+  schema: "max_gold",
   name: "summary",
   description: "KPIs météo de crise"
 }

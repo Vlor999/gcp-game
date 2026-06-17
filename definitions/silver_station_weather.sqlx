@@ -1,6 +1,6 @@
 config {
   type: "table",
-  schema: "willem_silver",
+  schema: "max_silver",
   name: "station_weather",
   description: "Nettoyage et dédoublage des données météo"
 }
@@ -11,7 +11,7 @@ SELECT
   temperature,
   snowfall AS snow,
   wind_speed AS wind
-FROM `onboarding-de-willem-499614.willem_bronze.stations_weather_raw`
+FROM `onboarding-de.max_bronze.stations_weather_raw`
 QUALIFY ROW_NUMBER() OVER (
   PARTITION BY stop_name, timestamp
   ORDER BY level DESC
