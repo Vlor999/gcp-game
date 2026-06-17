@@ -25,6 +25,8 @@ main:
             type: OAuth2
           body:
             compilationResult: ${compilation_result.body.name}
+            invocationConfig:
+              serviceAccount: ${WORKFLOW_SA}
         result: invocation_result
 
     - done:
