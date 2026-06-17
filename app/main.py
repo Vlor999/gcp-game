@@ -4,11 +4,12 @@ import os
 import requests
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
+from loguru import logger
 
 
 PROJECT_ID = os.environ["PROJECT_ID"]
-BQ_DATASET = os.environ.get("BQ_DATASET", "willem_bronze")
-BQ_TABLE = os.environ.get("BQ_TABLE", "stations_weather_raw")
+BQ_DATASET = os.environ.get("BQ_BRONZE_DATASET", "willem_bronze")
+BQ_TABLE = os.environ.get("BQ_SNCF_WEATHER_STATION_TABLE", "stations_weather_raw")
 
 CITY = os.environ.get("CITY", "Paris")
 LAT = float(os.environ.get("LAT", "48.8566"))
@@ -31,11 +32,11 @@ def ensure_table(client: bigquery.Client, table_id: str) -> None:
 
     try:
         client.get_table(table_id)
-        print(f"Table already exists: {table_id}")
+        logger.info(f"Table already exists: {table_id}")
     except NotFound:
         table = bigquery.Table(table_id, schema=schema)
         client.create_table(table)
-        print(f"Created table: {table_id}")
+        logger.info(f"Created table: {table_id}")
 
 
 def fetch_weather() -> list[dict]:
@@ -72,6 +73,8 @@ def fetch_weather() -> list[dict]:
 
 
 def main() -> None:
+    logger.info(f"Fetching weather data for {CITY} (lat: {LAT}, lon: {LON})")
+    logger.info(f"Inserting data into BigQuery table: {PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}")
     client = bigquery.Client(project=PROJECT_ID)
     table_id = f"{PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}"
 
@@ -83,7 +86,7 @@ def main() -> None:
     if errors:
         raise RuntimeError(f"BigQuery insert errors: {errors}")
 
-    print(f"Inserted {len(rows)} rows into {table_id}")
+    logger.info(f"Inserted {len(rows)} rows into {table_id}")
 
 
 if __name__ == "__main__":

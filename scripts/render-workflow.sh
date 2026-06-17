@@ -41,8 +41,8 @@ else
   files_to_render=(
     "workflows/weather_pipeline.template.yaml:workflows/weather_pipeline.yaml"
     "workflow_settings.template.yaml:workflow_settings.yaml"
-    "definitions/silver_station_weather.template.sqlx:definitions/silver_station_weather.sqlx"
-    "definitions/gold_summary.template.sqlx:definitions/gold_summary.sqlx"
+    "templates/silver_station_weather.sqlx:definitions/silver_station_weather.sqlx"
+    "templates/gold_summary.sqlx:definitions/gold_summary.sqlx"
   )
 fi
 
