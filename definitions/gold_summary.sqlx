@@ -1,0 +1,14 @@
+config {
+  type: "table",
+  schema: "willem_gold",
+  name: "summary",
+  description: "KPIs météo de crise"
+}
+
+SELECT
+  time,
+  COUNTIF(temperature < -5.0 OR temperature > 40.0) AS temperature_crisis_count,
+  COUNTIF(snow > 5.0) AS snow_crisis_count,
+  COUNTIF(wind > 100.0) AS wind_crisis_count
+FROM ${ref("station_weather")}
+GROUP BY time

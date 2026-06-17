@@ -3,24 +3,24 @@ main:
     - run_ingestion:
         call: googleapis.run.v2.projects.locations.jobs.run
         args:
-          name: projects/onboarding-de-willem-499614/locations/europe-west1/jobs/willem-meteo-ingest
+          name: projects/${PROJECT_ID}/locations/${REGION}/jobs/${JOB_NAME}
           body: {}
         result: ingestion_result
 
     - create_compilation:
         call: http.post
         args:
-          url: ${"https://dataform.googleapis.com/v1beta1/projects/onboarding-de-willem-499614/locations/europe-west1/repositories/willem-meteo-dataform/compilationResults"}
+          url: ${"https://dataform.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/repositories/${DATAFORM_REPO}/compilationResults"}
           auth:
             type: OAuth2
           body:
-            gitCommitish: willem
+            gitCommitish: ${BRANCH_NAME}
         result: compilation_result
 
     - run_dataform:
         call: http.post
         args:
-          url: ${"https://dataform.googleapis.com/v1beta1/projects/onboarding-de-willem-499614/locations/europe-west1/repositories/willem-meteo-dataform/workflowInvocations"}
+          url: ${"https://dataform.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/${REGION}/repositories/${DATAFORM_REPO}/workflowInvocations"}
           auth:
             type: OAuth2
           body:

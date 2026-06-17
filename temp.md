@@ -1,244 +1,115 @@
-Oui. Le chemin le plus propre pour ton “sous-projet” est de **rester dans le projet GCP existant** et de créer des ressources préfixées, par exemple `willem-meteo-*`. GCP ne fait pas vraiment de “projet dans un projet” ; soit tu crées un nouveau project GCP sous une folder, soit tu namespaces proprement dans `onboarding-de`. Je pars sur cette deuxième option.
+# Guide d'intégration GCP Onboarding (Step-by-Step)
 
-J’ai essayé de retrouver un repo `onboarding-de` / `onboarding-de` via le connecteur GitHub installé, mais je n’ai rien trouvé, donc je te donne une procédure générique.
+Ce guide détaille toutes les étapes nécessaires pour configurer et déployer votre environnement météo sur Google Cloud Platform (GCP) avec une intégration CI/CD propre via GitHub Actions.
 
-## 0. Architecture cible
-
-Tu vas construire ce flux :
-
-`GitHub perso` → `GitHub Actions CI/CD` → `Artifact Registry` → `Cloud Run Job Python` → `BigQuery bronze` → `Workflows` → `BigQuery silver/gold` → `Looker Studio`
-
-GitHub Actions sera ton pipeline CI/CD : un workflow est un fichier YAML dans `.github/workflows` qui se déclenche sur push, manuellement ou selon un schedule. ([GitHub Docs][1])
-Pour l’auth GitHub → GCP, on utilisera **Workload Identity Federation**, pas de clé JSON longue durée : Google recommande cette approche pour éviter la gestion de clés de service account, et l’action officielle `google-github-actions/auth` supporte WIF. ([Google Cloud][2])
+Il a été conçu pour servir de parcours pédagogique d'onboarding : chaque collaborateur déploie ses propres ressources isolées dans son sandbox GCP, tout en utilisant un dépôt GitHub commun.
 
 ---
 
-## 1. Variables de base
+## 1. Initialisation locale et branche
 
-Dans Cloud Shell ou ton terminal avec `gcloud` configuré :
-##### télécharger gcloud 
+Toutes les ressources GCP seront isolées par personne et préfixées par votre nom d'utilisateur (variable `NAME`).
 
-You have those informations on your [.env.example](.env.example).
-You have to copy them on your .env and update them.
+### 1.1 Configurer le fichier `.env`
+Le fichier `.env` contient toutes les variables de configuration utilisées par les scripts locaux et le générateur de templates. Créez-le à partir de l'exemple fourni :
 ```bash
-PYTHONPATH=.
+cp .env.example .env
+```
 
-NAME=your-name
-GITHUB_OWNER=your-github-username
-GITHUB_REPO=gcp-game
+Mettez à jour les variables suivantes dans le fichier `.env` :
+*   `NAME` : votre prénom en minuscules, sans espaces ni caractères spéciaux (ex: `willem`).
+*   `GITHUB_OWNER` : votre nom d'utilisateur GitHub (qui possède le fork ou le dépôt principal).
+*   `GITHUB_REPO` : le nom du dépôt GitHub (par défaut `gcp-game`).
+*   `PROJECT_ID` : l'identifiant exact de votre projet bac à sable GCP (ex: `onboarding-de-willem-499614`).
+*   `PROJECT_NUMBER` : le numéro de votre projet GCP (disponible sur l'accueil de votre console GCP).
 
-PROJECT_ID=onboarding-de
+### 1.2 Créer votre branche et initialiser le workflow
+Lancez la commande suivante :
+```bash
+make bootstrap
+```
+Cette commande :
+1. Lit la variable `NAME` depuis votre fichier `.env`.
+2. Vérifie qu'aucune branche locale ou distante ne porte déjà ce nom.
+3. Crée et bascule sur la branche Git locale nommée selon votre `NAME` (ex: `willem`).
+4. Génère localement le fichier de configuration de workflow `workflows/weather_pipeline.yaml` ainsi que les fichiers Dataform de transformation SQL (`workflow_settings.yaml`, `definitions/silver_station_weather.sqlx`, `definitions/gold_summary.sqlx`) à partir des templates locaux.
 
-REGION=europe-west1
-
-PREFIX=${NAME}-meteo
-
-BQ_LOCATION=EU
-JOB_NAME=${PREFIX}-ingest
-WORKFLOW_NAME=${PREFIX}-pipeline
-AR_REPO=${PREFIX}-docker
-BQ_BRONZE_DATASET=${NAME}_bronze
-BQ_SILVER_DATASET=${NAME}_silver
-BQ_GOLD_DATASET=${NAME}_gold
-BQ_STOPS_SNCF_RAW_TABLE=stops_sncf_raw
-BQ_STATIONS_WEATHER_RAW_TABLE=stations_weather_raw
-BQ_STATION_TABLE=station
-BQ_STATION_SNCF_TABLE=station_sncf
-BQ_STATION_WEATHER_TABLE=station_weather
-BQ_SNCF_WEATHER_STATION_TABLE=sncf_weather_station
-BQ_SUMMARY_TABLE=summary
-RUNTIME_SA=${PREFIX}-runtime@${PROJECT_ID}.iam.gserviceaccount.com
-CICD_SA=${PREFIX}-cicd@${PROJECT_ID}.iam.gserviceaccount.com
-WORKFLOW_SA=${PREFIX}-workflow@${PROJECT_ID}.iam.gserviceaccount.com
+### 1.3 Charger les variables dans votre terminal
+Pour pouvoir exécuter les commandes GCP du guide par simple copier-coller dans votre session de terminal, chargez les variables d'environnement locales :
+```bash
+set -a; source .env; set +a
 ```
 
 ---
 
-### 1.1 Login to GCP
-You have to login to your google account using your theodo email address using :
+## 2. Authentification GCP & Activation des APIs
 
+### 2.1 Connexion à votre compte GCP
+Connectez-vous à votre compte GCP via le SDK `gcloud` :
 ```bash
 gcloud auth login
+gcloud auth application-default login
 ```
 
-Then you have to set the project : 
+Configurez le projet actif dans le SDK `gcloud` :
 ```bash
 gcloud config set project "$PROJECT_ID"
 ```
 
-if you have issues like :
-```log
-ERROR: (gcloud.auth.application-default.set-quota-project) There was a problem refreshing your current auth tokens: ('invalid_grant: Account has been deleted', {'error': 'invalid_grant', 'error_description': 'Account has been deleted'})
-Please run:
-
-  $ gcloud auth application-default login
-
-to obtain new credentials.
-```
-Then follow the explained steps.
-At the end verify everything has been properly set with : 
+Vérifiez que la configuration est correcte :
 ```bash
-gcloud auth list
+[ "$(gcloud config get-value project 2>/dev/null)" = "$PROJECT_ID" ] && echo "Config OK" || echo "Erreur de configuration"
 ```
-and
+
+### 2.2 Activer les APIs GCP nécessaires
+Activez les APIs requises pour Cloud Run, Artifact Registry, BigQuery, Workflows, Dataform et l'authentification GitHub :
 ```bash
-gcloud config get-value project
-# or 
-[ "$(gcloud config get-value project 2>/dev/null)" = "$PROJECT_ID" ] && echo true || echo false
-```
-You must see either your project id or True
-
-## 2. Activer les APIs GCP
-
-```bash
-gcloud config set project "$PROJECT_ID"
-
 gcloud services enable \
   run.googleapis.com \
   artifactregistry.googleapis.com \
   bigquery.googleapis.com \
   workflows.googleapis.com \
+  dataform.googleapis.com \
   iamcredentials.googleapis.com \
   sts.googleapis.com \
-  cloudresourcemanager.googleapis.com \
-  dataform.googleapis.com
+  cloudresourcemanager.googleapis.com
 ```
-
-You'll have something like:
-```txt
-Operation "operations/..." finished successfully.
-```
-
-Artifact Registry sert à stocker tes images Docker privées ; la doc Google montre ce flow “create repository → authenticate → push image”. ([Google Cloud][3])
-Cloud Run Jobs est adapté ici parce que ton ingestion météo est un batch, pas une API HTTP. Pour créer des jobs, Google documente notamment les rôles `Cloud Run Developer`, `Service Account User`, et `Artifact Registry Reader`. ([Google Cloud][4])
 
 ---
 
-## 3. Créer les datasets et les tables BigQuery
+## 3. Création des datasets et des tables d'ingestion
 
+### 3.1 La convention de nommage BigQuery
+BigQuery utilise une structure d'adresse stricte à trois niveaux : `projet.dataset.table`. 
+Pour isoler les données de chaque utilisateur tout en conservant l'architecture médaillon, la convention suivante est adoptée :
+*   `willem_bronze` (Données brutes, copie conforme de la source).
+*   `willem_silver` (Données dédoublées, nettoyées et typées par Dataform).
+*   `willem_gold` (Données agrégées, prêtes pour le reporting par Dataform).
+
+### 3.2 Créer les datasets (Bronze, Silver, Gold)
+Créez les trois datasets dans votre région cible :
 ```bash
 bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_BRONZE_DATASET"
 bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_SILVER_DATASET"
 bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_GOLD_DATASET"
-# or
-bq --location="$BQ_LOCATION" mk --dataset "$BQ_BRONZE_DATASET"
-bq --location="$BQ_LOCATION" mk --dataset "$BQ_SILVER_DATASET"
-bq --location="$BQ_LOCATION" mk --dataset "$BQ_GOLD_DATASET"
 ```
 
-BigQuery utilise la structure `project.dataset.table`. Il n'est donc pas possible de créer un chemin à quatre niveaux comme `onboarding-de.willem.bronze.stops_sncf_raw`.
-
-Le modèle retenu consiste donc à mettre le nom et la couche dans le dataset :
-
-```text
-onboarding-de.willem_bronze.stops_sncf_raw
-onboarding-de.willem_bronze.stations_weather_raw
-onboarding-de.willem_silver.station
-onboarding-de.willem_silver.station_sncf
-onboarding-de.willem_silver.station_weather
-onboarding-de.willem_gold.sncf_weather_station
-onboarding-de.willem_gold.summary
-```
-
-Répartition des tables :
-
-```text
-Bronze:
-  stops_sncf_raw
-  stations_weather_raw
-
-Silver:
-  station
-  station_sncf
-  station_weather
-
-Gold:
-  sncf_weather_station
-  summary
-```
-
-Les schémas JSON sont dans `schemas/bigquery/`. Ils suivent la structure documentée dans [tables.md](tables.md).
-
-Pour créer les tables avec ces schémas JSON :
-
-######## expliquer les commandes
-
+### 3.3 Créer les tables de la couche Bronze
+Les tables de la couche **Bronze** doivent être créées manuellement car elles sont alimentées en streaming JSON par notre script d'ingestion Python (qui requiert que la table cible existe déjà) :
 ```bash
-# Bronze
 bq mk --table "$PROJECT_ID:$BQ_BRONZE_DATASET.$BQ_STOPS_SNCF_RAW_TABLE" \
   schemas/bigquery/stops_sncf_raw.json
 
 bq mk --table "$PROJECT_ID:$BQ_BRONZE_DATASET.$BQ_STATIONS_WEATHER_RAW_TABLE" \
   schemas/bigquery/stations_weather_raw.json
-
-# Silver
-bq mk --table "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_TABLE" \
-  schemas/bigquery/station.json
-
-bq mk --table "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_SNCF_TABLE" \
-  schemas/bigquery/station_sncf.json
-
-bq mk --table "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_WEATHER_TABLE" \
-  schemas/bigquery/station_weather.json
-
-# Gold
-bq mk --table "$PROJECT_ID:$BQ_GOLD_DATASET.$BQ_SNCF_WEATHER_STATION_TABLE" \
-  schemas/bigquery/sncf_weather_station.json
-
-bq mk --table "$PROJECT_ID:$BQ_GOLD_DATASET.$BQ_SUMMARY_TABLE" \
-  schemas/bigquery/summary.json
 ```
-
-Note : BigQuery ne force pas les clés primaires et étrangères avec un simple fichier de schéma JSON `bq mk`. Les contraintes documentées dans `tables.md` doivent donc être appliquées dans les transformations SQL, les tests de qualité ou via des `ALTER TABLE ... ADD PRIMARY KEY / FOREIGN KEY NOT ENFORCED` si tu veux les déclarer explicitement.
-
-Tu peux vérifier la création avec :
-
-```bash
-bq ls "$PROJECT_ID:$BQ_BRONZE_DATASET"
-bq ls "$PROJECT_ID:$BQ_SILVER_DATASET"
-bq ls "$PROJECT_ID:$BQ_GOLD_DATASET"
-# or 
-bq ls "$BQ_BRONZE_DATASET"
-bq ls "$BQ_SILVER_DATASET"
-bq ls "$BQ_GOLD_DATASET"
-```
-
-### 3.1 Supprimer une table si besoin
-
-Si tu veux supprimer une table précise, utilise `bq rm -t` :
-
-```bash
-bq rm -f -t "$PROJECT_ID:$BQ_BRONZE_DATASET.$BQ_STOPS_SNCF_RAW_TABLE"
-```
-
-Même logique pour les autres tables :
-
-```bash
-bq rm -f -t "$PROJECT_ID:$BQ_BRONZE_DATASET.$BQ_STATIONS_WEATHER_RAW_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_SNCF_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_SILVER_DATASET.$BQ_STATION_WEATHER_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_GOLD_DATASET.$BQ_SNCF_WEATHER_STATION_TABLE"
-bq rm -f -t "$PROJECT_ID:$BQ_GOLD_DATASET.$BQ_SUMMARY_TABLE"
-```
-
-Si tu veux supprimer tout le dataset et toutes ses tables, utilise `bq rm -r -d` :
-
-```bash
-bq rm -r -f -d "$PROJECT_ID:$BQ_BRONZE_DATASET"
-bq rm -r -f -d "$PROJECT_ID:$BQ_SILVER_DATASET"
-bq rm -r -f -d "$PROJECT_ID:$BQ_GOLD_DATASET"
-```
-
-
-BigQuery recommande de choisir la localisation du dataset à la création, car elle ne peut pas être changée ensuite ; `bq mk --dataset --location` est la commande prévue pour ça. ([Google Cloud][5])
+*   *Note sur les couches Silver et Gold* : **Ne créez pas les tables des couches Silver et Gold**. Contrairement aux étapes précédentes, c'est **Dataform** qui va créer et écraser dynamiquement ces tables lors de l'exécution du pipeline d'orchestration GCP !
 
 ---
 
-## 4. Créer les service accounts
-### max
-######## renaming et documentation entre les deux objets
-######## ⚠️ permissions
+## 4. Créer les comptes de service (SAs) & Droits IAM
+
+### 4.1 Création des comptes de service
 ```bash
 gcloud iam service-accounts create "${PREFIX}-runtime" \
   --display-name="Runtime SA for weather ingestion"
@@ -250,8 +121,7 @@ gcloud iam service-accounts create "${PREFIX}-workflow" \
   --display-name="Workflow SA for weather pipeline"
 ```
 
-### Permissions runtime Python
-
+### 4.2 Rôles pour le SA Ingestion Python (Runtime)
 ```bash
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${RUNTIME_SA}" \
@@ -262,8 +132,7 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --role="roles/bigquery.dataEditor"
 ```
 
-### Permissions CI/CD
-
+### 4.3 Rôles pour le SA CI/CD (GitHub Actions)
 ```bash
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${CICD_SA}" \
@@ -276,6 +145,15 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${CICD_SA}" \
   --role="roles/workflows.editor"
+# Requis pour accorder les droits sur les tables et exécuter BigQuery dans le pipeline
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${CICD_SA}" \
+  --role="roles/bigquery.admin"
+
+# Requis pour gérer ou tester le dépôt Dataform
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${CICD_SA}" \
+  --role="roles/dataform.admin"
 
 gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
   --member="serviceAccount:${CICD_SA}" \
@@ -286,12 +164,16 @@ gcloud iam service-accounts add-iam-policy-binding "$WORKFLOW_SA" \
   --role="roles/iam.serviceAccountUser"
 ```
 
-### Permissions Workflows
-
+### 4.4 Rôles pour le SA Workflows
 ```bash
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${WORKFLOW_SA}" \
-  --role="roles/run.invoker"
+  --role="roles/run.developer"
+
+# Requis pour compiler et appeler le pipeline Dataform
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${WORKFLOW_SA}" \
+  --role="roles/dataform.editor"
 
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${WORKFLOW_SA}" \
@@ -302,11 +184,9 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --role="roles/bigquery.dataEditor"
 ```
 
-Pour un vrai contexte client/prod, tu restreindrais les permissions au niveau dataset/repository/job. Pour ton onboarding, c’est volontairement simple.
-
 ---
 
-## 5. Créer Artifact Registry
+## 5. Configuration d'Artifact Registry
 
 ```bash
 gcloud artifacts repositories create "$AR_REPO" \
@@ -314,136 +194,15 @@ gcloud artifacts repositories create "$AR_REPO" \
   --location="$REGION" \
   --description="Docker images for weather GCP onboarding" \
   --project="$PROJECT_ID"
-```
-######### doc qu'est ce que c'est que ça
 
-```bash
 gcloud auth configure-docker "${REGION}-docker.pkg.dev"
 ```
 
-La doc Artifact Registry montre cette commande `gcloud artifacts repositories create ... --repository-format=docker`, puis `gcloud auth configure-docker REGION-docker.pkg.dev` pour pousser des images. ([Google Cloud][3])
-
 ---
 
-## 6. Créer ton repo GitHub perso
-
-Avec GitHub CLI :
+## 6. Configuration de la Workload Identity Federation (WIF)
 
 ```bash
-mkdir weather-gcp-game
-cd weather-gcp-game
-git init -b main
-
-gh repo create "$GITHUB_OWNER/$GITHUB_REPO" \
-  --private \
-  --source=. \
-  --remote=origin
-```
-
-Ou via l’UI GitHub : **New repository**, owner = ton compte perso, nom = `weather-gcp-game`, visibilité private. GitHub permet de créer un repo dans ton compte personnel si tu as les permissions nécessaires, et documente aussi l’option GitHub CLI. ([GitHub Docs][6])
-
-Structure cible :
-
-######### attention a la creation du repo
-
-```text
-weather-gcp-game/
-  app/
-    main.py
-  workflows/
-    weather_pipeline.yaml
-  .github/
-    workflows/
-      deploy.yml
-  Dockerfile
-  requirements.txt
-  README.md
-```
-
----
-
-## 7. Ajouter le script Python d’ingestion
-
-Crée `requirements.txt` :
-
-```txt
-google-cloud-bigquery>=3.25.0,<4
-requests>=2.32.0,<3
-```
-
-Le fichier `app/main.py` ingère une ligne météo courante depuis Open-Meteo et l'insère dans la table bronze `stations_weather_raw`.
-
-Il doit produire des lignes compatibles avec le schéma `schemas/bigquery/stations_weather_raw.json` :
-
-```text
-stop_name
-stop_lat
-stop_lon
-level
-temperature
-snowfall
-wind_speed
-is_fetched
-timestamp
-```
-
-Les anciennes colonnes d'exemple comme `run_id`, `weather_date`, `temperature_2m_max`, `precipitation_sum` ou `ingestion_ts` ne doivent pas être envoyées vers `stations_weather_raw`.
-
-Le code utilise `insert_rows_json`, qui est l’appel Python documenté par Google pour insérer des lignes JSON dans une table BigQuery. ([Google Cloud][7])
-
----
-
-## 8. Ajouter le Dockerfile
-
-Crée `Dockerfile` :
-
-```dockerfile
-FROM python:3.12-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app/ .
-
-CMD ["python", "main.py"]
-```
-
-Test local possible :
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-gcloud auth application-default login
-
-PROJECT_ID="$PROJECT_ID" \
-BQ_DATASET="$BQ_BRONZE_DATASET" \
-BQ_TABLE="$BQ_STATIONS_WEATHER_RAW_TABLE" \
-python app/main.py
-```
-
-Puis vérifie :
-
-```bash
-bq query --use_legacy_sql=false "
-SELECT *
-FROM \`${PROJECT_ID}.${BQ_BRONZE_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}\`
-LIMIT 10
-"
-```
-
----
-
-## 9. Créer Workload Identity Federation pour GitHub Actions
-
-```bash
-export PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
-export WIF_POOL="github-pool"
-export WIF_PROVIDER="github-provider"
-
 gcloud iam workload-identity-pools create "$WIF_POOL" \
   --project="$PROJECT_ID" \
   --location="global" \
@@ -459,8 +218,7 @@ gcloud iam workload-identity-pools providers create-oidc "$WIF_PROVIDER" \
   --attribute-condition="assertion.repository=='${GITHUB_OWNER}/${GITHUB_REPO}'"
 ```
 
-Autorise uniquement ce repo GitHub à impersonate le service account CI/CD :
-
+Autorisez le dépôt GitHub à usurper l'identité du SA CI/CD :
 ```bash
 gcloud iam service-accounts add-iam-policy-binding "$CICD_SA" \
   --project="$PROJECT_ID" \
@@ -468,347 +226,136 @@ gcloud iam service-accounts add-iam-policy-binding "$CICD_SA" \
   --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL}/attribute.repository/${GITHUB_OWNER}/${GITHUB_REPO}"
 ```
 
-Garde cette valeur, elle ira dans GitHub Actions :
+Initialisez l'agent de service interne de GCP Workflows :
+```bash
+gcloud beta services identity create \
+  --service=workflows.googleapis.com \
+  --project="$PROJECT_ID" \
+  --quiet
+```
+
+---
+
+## 7. Configuration de Dataform sur la console GCP
+
+Comme l'API Dataform nécessite une connexion authentifiée et sécurisée à votre dépôt Git pour compiler vos scripts SQLX, vous devez créer et lier le dépôt via la console GCP.
+
+### 7.1 Créer le dépôt Dataform
+1. Rendez-vous sur la console GCP, dans l'outil **BigQuery** puis dans le menu **Dataform** (à gauche).
+2. Cliquez sur **Créer un dépôt** (*Create repository*).
+3. Renseignez l'ID du dépôt : saisissez la valeur de votre variable `${PREFIX}-dataform` (ex: `willem-meteo-dataform`).
+4. Choisissez la région de déploiement : `europe-west1` (doit être identique à la variable `${REGION}`).
+
+### 7.2 Connecter le dépôt à votre dépôt Git (GitHub)
+1. Dans la liste des dépôts Dataform, cliquez sur le dépôt que vous venez de créer.
+2. Cliquez sur **Se connecter à Git** (*Connect to Git*).
+3. Choisissez le protocole **HTTPS** :
+   *   Saisissez l'URL de votre dépôt Git : `https://github.com/ton-username-github/gcp-game.git`
+   *   Saisissez le nom de la branche par défaut : votre variable `${NAME}` (ou `main` si vous poussez directement dessus).
+4. Pour l'authentification Git :
+   *   Générez un **Personal Access Token (PAT)** sur GitHub avec les droits `repo` en lecture/écriture.
+   *   Enregistrez ce token sous forme de secret GCP Secret Manager et associez-le dans la configuration de connexion Git sur Dataform.
+
+---
+
+## 8. Configuration de GitHub avec le CLI `gh`
 
 ```bash
-echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL}/providers/${WIF_PROVIDER}"
+gh auth status
+```
+
+Configurez automatiquement les variables d'intégration de votre dépôt GitHub :
+```bash
+gh variable set GCP_PROJECT_ID --body "$PROJECT_ID"
+gh variable set GCP_PROJECT_NUMBER --body "$PROJECT_NUMBER"
+gh variable set GCP_SERVICE_ACCOUNT --body "$CICD_SA"
+gh variable set GCP_WORKLOAD_IDENTITY_PROVIDER --body "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL}/providers/${WIF_PROVIDER}"
 ```
 
 ---
 
-## 10. Ajouter le workflow GCP Workflows
+## 9. Développement & Lancement local
 
-Crée `workflows/weather_pipeline.yaml` :
-
-```yaml
-main:
-  steps:
-    - run_ingestion:
-        call: googleapis.run.v2.projects.locations.jobs.run
-        args:
-          name: projects/PROJECT_ID/locations/REGION/jobs/JOB_NAME
-          body: {}
-        result: ingestion_result
-
-    - build_silver:
-        call: googleapis.bigquery.v2.jobs.query
-        args:
-          projectId: PROJECT_ID
-          body:
-            useLegacySql: false
-            query: |
-              CREATE OR REPLACE TABLE `PROJECT_ID.willem_silver.station_weather` AS
-              SELECT
-                LOWER(REGEXP_REPLACE(stop_name, r'[^a-zA-Z0-9]+', '_')) AS id,
-                timestamp AS time,
-                temperature,
-                snowfall AS snow,
-                wind_speed AS wind
-              FROM `PROJECT_ID.willem_bronze.stations_weather_raw`
-              QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY stop_name, timestamp
-                ORDER BY level DESC
-              ) = 1;
-
-    - build_gold:
-        call: googleapis.bigquery.v2.jobs.query
-        args:
-          projectId: PROJECT_ID
-          body:
-            useLegacySql: false
-            query: |
-              CREATE OR REPLACE TABLE `PROJECT_ID.willem_gold.summary` AS
-              SELECT
-                time,
-                COUNTIF(temperature < -5.0 OR temperature > 40.0) AS temperature_crisis_count,
-                COUNTIF(snow > 5.0) AS snow_crisis_count,
-                COUNTIF(wind > 100.0) AS wind_crisis_count
-              FROM `PROJECT_ID.willem_silver.station_weather`
-              GROUP BY time;
-
-    - done:
-        return: "Pipeline completed"
+### 9.1 Installer les dépendances
+```bash
+uv sync
 ```
 
-Workflows sait appeler directement Cloud Run Jobs via `googleapis.run.v2.projects.locations.jobs.run`, et ce connecteur attend le nom complet du job `projects/{project}/locations/{location}/jobs/{job}`. ([Google Cloud][8])
+### 9.2 Exécuter l'ingestion localement
+```bash
+make run
+```
 
 ---
 
-## 11. Ajouter la CI/CD GitHub Actions
+## 10. Premier Push & Déploiement CI/CD
 
-Crée `.github/workflows/deploy.yml` :
-
-```yaml
-name: Deploy weather pipeline
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  id-token: write
-
-env:
-  PROJECT_ID: onboarding-de
-  REGION: europe-west1
-  AR_REPO: willem-meteo-docker
-  JOB_NAME: willem-meteo-ingest
-  WORKFLOW_NAME: willem-meteo-pipeline
-  BQ_DATASET: willem_bronze
-  BQ_TABLE: stations_weather_raw
-  RUNTIME_SA: willem-meteo-runtime@onboarding-de.iam.gserviceaccount.com
-  WORKFLOW_SA: willem-meteo-workflow@onboarding-de.iam.gserviceaccount.com
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-          workload_identity_provider: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: willem-meteo-cicd@onboarding-de.iam.gserviceaccount.com
-
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Configure Docker auth
-        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-
-      - name: Build and push image
-        run: |
-          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${JOB_NAME}:${GITHUB_SHA}"
-          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
-
-          docker build -t "${IMAGE}" .
-          docker push "${IMAGE}"
-
-      - name: Create or update Cloud Run Job
-        run: |
-          if gcloud run jobs describe "${JOB_NAME}" \
-            --region="${REGION}" \
-            --project="${PROJECT_ID}" >/dev/null 2>&1; then
-
-            gcloud run jobs update "${JOB_NAME}" \
-              --image="${IMAGE}" \
-              --region="${REGION}" \
-              --project="${PROJECT_ID}" \
-              --service-account="${RUNTIME_SA}" \
-              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,DAYS_BACK=7"
-          else
-            gcloud run jobs create "${JOB_NAME}" \
-              --image="${IMAGE}" \
-              --region="${REGION}" \
-              --project="${PROJECT_ID}" \
-              --service-account="${RUNTIME_SA}" \
-              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,DAYS_BACK=7" \
-              --max-retries=0
-          fi
-
-      - name: Deploy Workflows pipeline
-        run: |
-          sed \
-            -e "s/PROJECT_ID/${PROJECT_ID}/g" \
-            -e "s/REGION/${REGION}/g" \
-            -e "s/JOB_NAME/${JOB_NAME}/g" \
-            workflows/weather_pipeline.yaml > /tmp/weather_pipeline.yaml
-
-          gcloud workflows deploy "${WORKFLOW_NAME}" \
-            --location="${REGION}" \
-            --project="${PROJECT_ID}" \
-            --service-account="${WORKFLOW_SA}" \
-            --source=/tmp/weather_pipeline.yaml
-```
-
-Remplace dans ce fichier :
-
-```yaml
-PROJECT_NUMBER
-onboarding-de
-```
-
-par les vraies valeurs si besoin.
-
----
-
-## 12. Commit et push
-
+Ajoutez vos modifications (y compris les fichiers générés de configuration de workflow et les scripts Dataform `.sqlx`), commitez-les, et poussez votre branche vers GitHub :
 ```bash
 git add .
-git commit -m "Initial weather GCP onboarding pipeline"
-git push -u origin main
+git commit -m "feat: use Dataform for SQL transformations and orchestrate weather pipeline"
+git push -u origin "$NAME"
 ```
 
-Le push sur `main` déclenche GitHub Actions, qui build l’image Docker, la pousse dans Artifact Registry, crée ou met à jour le Cloud Run Job, puis déploie le workflow.
+L'intégration continue va automatiquement configurer le Job Cloud Run et déployer le fichier d'orchestration dans GCP Workflows.
 
 ---
 
-## 13. Lancer la pipeline
+## 11. Exécution & Validation du pipeline de données
 
-Après le premier déploiement :
-
+### 11.1 Lancer le workflow GCP
 ```bash
 gcloud workflows run "$WORKFLOW_NAME" \
   --location="$REGION" \
   --project="$PROJECT_ID"
 ```
+Ce workflow effectue désormais les actions suivantes :
+1. Déclenche le job Cloud Run pour écrire les lignes brutes dans la table **Bronze** BigQuery.
+2. Interroge l'API Dataform pour compiler vos scripts `.sqlx` présents sur votre branche Git.
+3. Exécute le graphe de transformation SQL (Dataform va automatiquement créer la table **Silver** avec les filtres de nettoyage, puis la table **Gold** avec les KPI de crise).
 
-Vérifie les exécutions Cloud Run :
-
-```bash
-gcloud run jobs executions list \
-  --job="$JOB_NAME" \
-  --region="$REGION" \
-  --project="$PROJECT_ID"
-```
-
-Vérifie les tables BigQuery :
+### 11.2 Valider le flux de données dans BigQuery
+Vérifiez le bon fonctionnement de l'ensemble de la chaîne de données :
 
 ```bash
-bq query --use_legacy_sql=false "
-SELECT *
-FROM \`${PROJECT_ID}.${BQ_BRONZE_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}\`
-LIMIT 10
-"
+# Vérifier la table Bronze (brute)
+bq query --use_legacy_sql=false "SELECT COUNT(*) as count FROM \`${PROJECT_ID}.${BQ_BRONZE_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}\`"
+
+# Vérifier la table Silver (nettoyée par Dataform)
+bq query --use_legacy_sql=false "SELECT COUNT(*) as count FROM \`${PROJECT_ID}.${BQ_SILVER_DATASET}.${BQ_STATION_WEATHER_TABLE}\`"
+
+# Vérifier la table Gold (KPI consolidés par Dataform)
+bq query --use_legacy_sql=false "SELECT * FROM \`${PROJECT_ID}.${BQ_GOLD_DATASET}.${BQ_SUMMARY_TABLE}\` ORDER BY time DESC LIMIT 10"
 ```
 
-```bash
-bq query --use_legacy_sql=false "
-SELECT *
-FROM \`${PROJECT_ID}.${BQ_SILVER_DATASET}.${BQ_STATION_WEATHER_TABLE}\`
-LIMIT 10
-"
-```
-
-```bash
-bq query --use_legacy_sql=false "
-SELECT *
-FROM \`${PROJECT_ID}.${BQ_GOLD_DATASET}.${BQ_SUMMARY_TABLE}\`
-"
-```
+### 11.3 Visualiser sur un Tableau de Bord (Looker Studio)
+Connectez-vous à Looker Studio, créez une source de données BigQuery pointant sur votre table Gold (`onboarding-de-willem-xxxxxx.willem_gold.summary`) et configurez vos rapports météo.
 
 ---
 
-## 14. Ajouter Dataform ensuite
+## 12. Nettoyage
 
-Dans ton schéma, Dataform est la bonne brique pour industrialiser les transformations bronze → silver → gold. Google décrit Dataform comme un service pour développer, tester, versionner et planifier des workflows de transformation BigQuery, et les fichiers SQLX permettent de définir des tables, dépendances et opérations SQL. ([Google Cloud][9])
-
-Quand le MVP marche, fais évoluer comme ça :
-
-```text
-definitions/
-  silver_station_weather.sqlx
-  gold_summary.sqlx
-workflow_settings.yaml
-```
-
-Exemple `definitions/silver_station_weather.sqlx` :
-
-```sql
-config {
-  type: "table",
-  schema: "willem_silver",
-  name: "station_weather"
-}
-
-SELECT
-  LOWER(REGEXP_REPLACE(stop_name, r'[^a-zA-Z0-9]+', '_')) AS id,
-  timestamp AS time,
-  temperature,
-  snowfall AS snow,
-  wind_speed AS wind
-FROM `${dataform.projectConfig.defaultDatabase}.willem_bronze.stations_weather_raw`
-QUALIFY ROW_NUMBER() OVER (
-  PARTITION BY stop_name, timestamp
-  ORDER BY level DESC
-) = 1
-```
-
-Exemple `definitions/gold_summary.sqlx` :
-
-```sql
-config {
-  type: "table",
-  schema: "willem_gold",
-  name: "summary"
-}
-
-SELECT
-  time,
-  COUNTIF(temperature < -5.0 OR temperature > 40.0) AS temperature_crisis_count,
-  COUNTIF(snow > 5.0) AS snow_crisis_count,
-  COUNTIF(wind > 100.0) AS wind_crisis_count
-FROM ${ref("station_weather")}
-GROUP BY time
-```
-
-Tu pourrais alors laisser Workflows faire :
-
-1. exécuter Cloud Run Job ;
-2. déclencher Dataform ;
-3. éventuellement notifier ou logguer le résultat.
-
----
-
-## 15. Looker Studio
-
-Dans Looker Studio, connecte une source BigQuery vers :
-
-```text
-onboarding-de.willem_gold.summary
-```
-
-Le connecteur BigQuery est documenté côté Looker Studio dans la section “Connect to BigQuery”. ([Aide Google][10])
-
-Idées de graphes :
-
-```text
-Scorecard: temperature_crisis_count
-Scorecard: snow_crisis_count
-Scorecard: wind_crisis_count
-Line chart: crisis counts par time
-```
-
----
-
-## 16. Nettoyage
-
-Quand tu veux supprimer le jeu :
-
+Si vous souhaitez supprimer l'ensemble de vos ressources de test créées sur GCP pour éviter des coûts inutiles de stockage ou de calcul :
 ```bash
-gcloud workflows delete "$WORKFLOW_NAME" \
-  --location="$REGION" \
-  --project="$PROJECT_ID"
-
-gcloud run jobs delete "$JOB_NAME" \
-  --region="$REGION" \
-  --project="$PROJECT_ID"
-
-gcloud artifacts repositories delete "$AR_REPO" \
-  --location="$REGION" \
-  --project="$PROJECT_ID"
-
-bq rm -r -f "$PROJECT_ID:$BQ_BRONZE_DATASET"
-bq rm -r -f "$PROJECT_ID:$BQ_SILVER_DATASET"
-bq rm -r -f "$PROJECT_ID:$BQ_GOLD_DATASET"
+gcloud workflows delete "$WORKFLOW_NAME" --location="$REGION" --project="$PROJECT_ID"
+gcloud run jobs delete "$JOB_NAME" --region="$REGION" --project="$PROJECT_ID"
+gcloud artifacts repositories delete "$AR_REPO" --location="$REGION" --project="$PROJECT_ID"
+bq rm -r -f -d "$PROJECT_ID:$BQ_BRONZE_DATASET"
+bq rm -r -f -d "$PROJECT_ID:$BQ_SILVER_DATASET"
+bq rm -r -f -d "$PROJECT_ID:$BQ_GOLD_DATASET"
 ```
 
-Le premier objectif est d’obtenir ce run complet : **push GitHub → image Docker → Cloud Run Job → BigQuery bronze → SQL silver/gold → table dashboardable**. Ensuite seulement, ajoute Dataform proprement.
+*Note : Pour détruire le dépôt Dataform, allez sur la console GCP sous BigQuery ➡️ Dataform et supprimez-le manuellement.*
 
-[1]: https://docs.github.com/en/actions/writing-workflows/about-workflows "Workflows - GitHub Docs"
-[2]: https://cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines "Configure Workload Identity Federation with deployment pipelines  |  Identity and Access Management (IAM)  |  Google Cloud Documentation"
-[3]: https://cloud.google.com/artifact-registry/docs/docker/store-docker-container-images "Quickstart: Store Docker container images in Artifact Registry  |  Google Cloud Documentation"
-[4]: https://cloud.google.com/run/docs/create-jobs "Create jobs  |  Cloud Run  |  Google Cloud Documentation"
-[5]: https://cloud.google.com/bigquery/docs/datasets "Create datasets  |  BigQuery  |  Google Cloud Documentation"
-[6]: https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository "Creating a new repository - GitHub Docs"
-[7]: https://cloud.google.com/bigquery/docs/samples/bigquery-table-insert-rows "Streaming insert  |  BigQuery  |  Google Cloud Documentation"
-[8]: https://cloud.google.com/workflows/docs/reference/googleapis/run/v2/projects.locations.jobs/run "Method: googleapis.run.v2.projects.locations.jobs.run  |  Workflows  |  Google Cloud Documentation"
-[9]: https://cloud.google.com/dataform/docs/overview "Dataform overview  |  Google Cloud Documentation"
-[10]: https://support.google.com/looker-studio/answer/6370296 "Connect to Google BigQuery  |  Looker Studio  |  Google Cloud Documentation"
+---
+
+[1]: https://docs.github.com/en/actions/writing-workflows/about-workflows
+[2]: https://cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines
+[3]: https://cloud.google.com/artifact-registry/docs/docker/store-docker-container-images
+[4]: https://cloud.google.com/run/docs/create-jobs
+[5]: https://cloud.google.com/bigquery/docs/datasets
+[6]: https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository
+[7]: https://cloud.google.com/bigquery/docs/samples/bigquery-table-insert-rows
+[8]: https://cloud.google.com/workflows/docs/reference/googleapis/run/v2/projects.locations.jobs/run
+[9]: https://cloud.google.com/dataform/docs/overview
+[10]: https://support.google.com/looker-studio/answer/6370296

@@ -2,23 +2,29 @@ name: Deploy weather pipeline
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   workflow_dispatch:
+    inputs:
+      name:
+        description: "Deployment name, for example willem. Defaults to the branch name."
+        required: false
+        type: string
 
 permissions:
   contents: read
   id-token: write
 
 env:
-  PROJECT_ID: onboarding-de
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   REGION: europe-west1
-  AR_REPO: willem-meteo-docker
-  JOB_NAME: willem-meteo-ingest
-  WORKFLOW_NAME: willem-meteo-pipeline
-  BQ_DATASET: willem_bronze
-  BQ_TABLE: stations_weather_raw
-  RUNTIME_SA: willem-meteo-runtime@onboarding-de.iam.gserviceaccount.com
-  WORKFLOW_SA: willem-meteo-workflow@onboarding-de.iam.gserviceaccount.com
+  BQ_LOCATION: EU
+  BQ_STOPS_SNCF_RAW_TABLE: stops_sncf_raw
+  BQ_STATIONS_WEATHER_RAW_TABLE: stations_weather_raw
+  BQ_STATION_TABLE: station
+  BQ_STATION_SNCF_TABLE: station_sncf
+  BQ_STATION_WEATHER_TABLE: station_weather
+  BQ_SNCF_WEATHER_STATION_TABLE: sncf_weather_station
+  BQ_SUMMARY_TABLE: summary
 
 jobs:
   deploy:
@@ -27,6 +33,66 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve deployment variables
+        id: vars
+        shell: bash
+        run: |
+          RAW_NAME="${{ inputs.name }}"
+          if [[ -z "${RAW_NAME}" ]]; then
+            RAW_NAME="${GITHUB_REF_NAME##*/}"
+          fi
+
+          # Extract project ID from service account email (e.g., prefix-cicd@project-id.iam.gserviceaccount.com)
+          SA_EMAIL="${{ vars.GCP_SERVICE_ACCOUNT }}"
+          RESOLVED_PROJECT_ID="${SA_EMAIL#*@}"
+          RESOLVED_PROJECT_ID="${RESOLVED_PROJECT_ID%.iam.gserviceaccount.com}"
+
+          if [[ -z "${RESOLVED_PROJECT_ID}" ]]; then
+            RESOLVED_PROJECT_ID="${PROJECT_ID}"
+          fi
+
+          # If pushing to main/master, fallback to name extracted from the service account
+          if [[ "${RAW_NAME}" == "main" || "${RAW_NAME}" == "master" ]]; then
+            if [[ -n "${SA_EMAIL}" ]]; then
+              RAW_NAME="${SA_EMAIL%%-meteo-cicd*}"
+            fi
+          fi
+
+          NAME_UNDERSCORE="$(echo "${RAW_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+|_+$//g')"
+          NAME_DASH="$(echo "${RAW_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')"
+
+          if [[ -z "${NAME_UNDERSCORE}" || -z "${NAME_DASH}" ]]; then
+            echo "Could not derive a valid deployment name from '${RAW_NAME}'" >&2
+            exit 1
+          fi
+
+          PREFIX="${NAME_DASH}-meteo"
+
+          {
+            echo "PROJECT_ID=${RESOLVED_PROJECT_ID}"
+            echo "NAME=${NAME_UNDERSCORE}"
+            echo "PREFIX=${PREFIX}"
+            echo "AR_REPO=${PREFIX}-docker"
+            echo "JOB_NAME=${PREFIX}-ingest"
+            echo "WORKFLOW_NAME=${PREFIX}-pipeline"
+            echo "BRANCH_NAME=${GITHUB_REF_NAME##*/}"
+            echo "DATAFORM_REPO=${PREFIX}-dataform"
+            echo "BQ_BRONZE_DATASET=${NAME_UNDERSCORE}_bronze"
+            echo "BQ_SILVER_DATASET=${NAME_UNDERSCORE}_silver"
+            echo "BQ_GOLD_DATASET=${NAME_UNDERSCORE}_gold"
+            echo "BQ_DATASET=${NAME_UNDERSCORE}_bronze"
+            echo "BQ_TABLE=${BQ_STATIONS_WEATHER_RAW_TABLE}"
+            echo "RUNTIME_SA=${PREFIX}-runtime@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
+            echo "CICD_SA=${PREFIX}-cicd@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
+            echo "WORKFLOW_SA=${PREFIX}-workflow@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
+          } >> "$GITHUB_ENV"
+
+
+          {
+            echo "cicd_sa=${PREFIX}-cicd@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
+          } >> "$GITHUB_OUTPUT"
+
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -37,8 +103,51 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
 
+      - name: Ensure Artifact Registry repository
+        run: |
+          if gcloud artifacts repositories describe "${AR_REPO}" \
+            --location="${REGION}" \
+            --project="${PROJECT_ID}" >/dev/null 2>&1; then
+            echo "Artifact Registry repository already exists: ${AR_REPO}"
+          else
+            gcloud artifacts repositories create "${AR_REPO}" \
+              --repository-format=docker \
+              --location="${REGION}" \
+              --description="Docker images for ${NAME} weather pipeline" \
+              --project="${PROJECT_ID}"
+          fi
+
       - name: Configure Docker auth
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Ensure BigQuery datasets and tables
+        run: |
+          for dataset in "${BQ_BRONZE_DATASET}" "${BQ_SILVER_DATASET}" "${BQ_GOLD_DATASET}"; do
+            if bq ls "${PROJECT_ID}:${dataset}" >/dev/null 2>&1; then
+              echo "BigQuery dataset already exists: ${PROJECT_ID}:${dataset}"
+            else
+              bq --location="${BQ_LOCATION}" mk --dataset "${PROJECT_ID}:${dataset}"
+            fi
+          done
+
+          ensure_table() {
+            local table_id="$1"
+            local schema_file="$2"
+
+            if bq show "${table_id}" >/dev/null 2>&1; then
+              echo "BigQuery table already exists: ${table_id}"
+            else
+              bq mk --table "${table_id}" "${schema_file}"
+            fi
+          }
+
+          ensure_table "${PROJECT_ID}:${BQ_BRONZE_DATASET}.${BQ_STOPS_SNCF_RAW_TABLE}" schemas/bigquery/stops_sncf_raw.json
+          ensure_table "${PROJECT_ID}:${BQ_BRONZE_DATASET}.${BQ_STATIONS_WEATHER_RAW_TABLE}" schemas/bigquery/stations_weather_raw.json
+          ensure_table "${PROJECT_ID}:${BQ_SILVER_DATASET}.${BQ_STATION_TABLE}" schemas/bigquery/station.json
+          ensure_table "${PROJECT_ID}:${BQ_SILVER_DATASET}.${BQ_STATION_SNCF_TABLE}" schemas/bigquery/station_sncf.json
+          ensure_table "${PROJECT_ID}:${BQ_SILVER_DATASET}.${BQ_STATION_WEATHER_TABLE}" schemas/bigquery/station_weather.json
+          ensure_table "${PROJECT_ID}:${BQ_GOLD_DATASET}.${BQ_SNCF_WEATHER_STATION_TABLE}" schemas/bigquery/sncf_weather_station.json
+          ensure_table "${PROJECT_ID}:${BQ_GOLD_DATASET}.${BQ_SUMMARY_TABLE}" schemas/bigquery/summary.json
 
       - name: Build and push image
         run: |
@@ -59,24 +168,20 @@ jobs:
               --region="${REGION}" \
               --project="${PROJECT_ID}" \
               --service-account="${RUNTIME_SA}" \
-              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,DAYS_BACK=7"
+              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,LEVEL=0"
           else
             gcloud run jobs create "${JOB_NAME}" \
               --image="${IMAGE}" \
               --region="${REGION}" \
               --project="${PROJECT_ID}" \
               --service-account="${RUNTIME_SA}" \
-              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,DAYS_BACK=7" \
+              --set-env-vars="PROJECT_ID=${PROJECT_ID},BQ_DATASET=${BQ_DATASET},BQ_TABLE=${BQ_TABLE},CITY=Paris,LAT=48.8566,LON=2.3522,LEVEL=0" \
               --max-retries=0
           fi
 
       - name: Deploy Workflows pipeline
         run: |
-          sed \
-            -e "s/PROJECT_ID/${PROJECT_ID}/g" \
-            -e "s/REGION/${REGION}/g" \
-            -e "s/JOB_NAME/${JOB_NAME}/g" \
-            workflows/weather_pipeline.yaml > /tmp/weather_pipeline.yaml
+          bash scripts/render-workflow.sh workflows/weather_pipeline.template.yaml /tmp/weather_pipeline.yaml
 
           gcloud workflows deploy "${WORKFLOW_NAME}" \
             --location="${REGION}" \
