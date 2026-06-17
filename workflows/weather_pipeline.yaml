@@ -25,6 +25,8 @@ main:
             type: OAuth2
           body:
             compilationResult: ${compilation_result.body.name}
+            invocationConfig:
+              serviceAccount: willem-meteo-workflow@onboarding-de-willem-499614.iam.gserviceaccount.com
         result: invocation_result
 
     - done:

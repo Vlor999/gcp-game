@@ -20,6 +20,7 @@ required_vars=(
   BQ_STATIONS_WEATHER_RAW_TABLE
   BQ_STATION_WEATHER_TABLE
   BQ_SUMMARY_TABLE
+  WORKFLOW_SA
 )
 
 for var_name in "${required_vars[@]}"; do

@@ -182,6 +182,12 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${WORKFLOW_SA}" \
   --role="roles/bigquery.dataEditor"
+
+# Requis sous strict ActAs checks pour utiliser sa propre identité lors de l'appel de Dataform
+gcloud iam service-accounts add-iam-policy-binding "$WORKFLOW_SA" \
+  --member="serviceAccount:${WORKFLOW_SA}" \
+  --role="roles/iam.serviceAccountUser" \
+  --project="$PROJECT_ID"
 ```
 
 ---
