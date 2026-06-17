@@ -8,8 +8,8 @@ from loguru import logger
 
 
 PROJECT_ID = os.environ["PROJECT_ID"]
-BQ_DATASET = os.environ.get("BQ_BRONZE_DATASET", "willem_bronze")
-BQ_TABLE = os.environ.get("BQ_SNCF_WEATHER_STATION_TABLE", "stations_weather_raw")
+BQ_DATASET = os.environ.get("BQ_DATASET") or os.environ.get("BQ_BRONZE_DATASET") or "willem_bronze"
+BQ_TABLE = os.environ.get("BQ_TABLE") or os.environ.get("BQ_STATIONS_WEATHER_RAW_TABLE") or "stations_weather_raw"
 
 CITY = os.environ.get("CITY", "Paris")
 LAT = float(os.environ.get("LAT", "48.8566"))
