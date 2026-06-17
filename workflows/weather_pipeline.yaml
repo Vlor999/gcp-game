@@ -37,7 +37,7 @@ main:
               CREATE OR REPLACE TABLE `onboarding-de-willem-499614.willem_gold.summary` AS
               SELECT
                 time,
-                COUNTIF(temperature < -5.0 OR temperature > 40.0) AS temperature_crisis_count,
+                COUNTIF(temperature < -5.0 OR temperature > 20.0) AS temperature_crisis_count,
                 COUNTIF(snow > 5.0) AS snow_crisis_count,
                 COUNTIF(wind > 100.0) AS wind_crisis_count
               FROM `onboarding-de-willem-499614.willem_silver.station_weather`
