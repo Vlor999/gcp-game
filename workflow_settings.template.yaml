@@ -1,3 +1,3 @@
 defaultProject: ${PROJECT_ID}
-defaultLocation: ${REGION}
+defaultLocation: ${BQ_LOCATION}
 defaultDataset: ${BQ_SILVER_DATASET}

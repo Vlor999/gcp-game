@@ -188,6 +188,12 @@ gcloud iam service-accounts add-iam-policy-binding "$WORKFLOW_SA" \
   --member="serviceAccount:${WORKFLOW_SA}" \
   --role="roles/iam.serviceAccountUser" \
   --project="$PROJECT_ID"
+
+# Requis pour que le service de service-account Dataform puisse assumer l'identité de WORKFLOW_SA lors de l'exécution
+gcloud iam service-accounts add-iam-policy-binding "$WORKFLOW_SA" \
+  --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-dataform.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project="$PROJECT_ID"
 ```
 
 ---
