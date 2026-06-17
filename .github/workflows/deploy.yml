@@ -34,6 +34,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Load User GCP Config
+        run: |
+          cat config/dev-${{ github.actor }}.env >> $GITHUB_ENV
+
       - name: Resolve deployment variables
         id: vars
         shell: bash
@@ -92,7 +96,6 @@ jobs:
           {
             echo "cicd_sa=${PREFIX}-cicd@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
           } >> "$GITHUB_OUTPUT"
-
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
