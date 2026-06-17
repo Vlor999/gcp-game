@@ -48,7 +48,7 @@ jobs:
           fi
 
           # Extract project ID from service account email (e.g., prefix-cicd@project-id.iam.gserviceaccount.com)
-          SA_EMAIL="${{ vars.GCP_SERVICE_ACCOUNT }}"
+          SA_EMAIL="${{ env.GCP_SERVICE_ACCOUNT }}"
           RESOLVED_PROJECT_ID="${SA_EMAIL#*@}"
           RESOLVED_PROJECT_ID="${RESOLVED_PROJECT_ID%.iam.gserviceaccount.com}"
 
@@ -100,8 +100,8 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v3
