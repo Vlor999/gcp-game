@@ -8,19 +8,23 @@ main:
         result: ingestion_result
 
     - create_compilation:
-        call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.create
+        call: http.post
         args:
-          parent: projects/onboarding-de-willem-499614/locations/europe-west1/repositories/willem-meteo-dataform
+          url: ${"https://dataform.googleapis.com/v1beta1/projects/onboarding-de-willem-499614/locations/europe-west1/repositories/willem-meteo-dataform/compilationResults"}
+          auth:
+            type: OAuth2
           body:
             gitCommitish: willem
         result: compilation_result
 
     - run_dataform:
-        call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.create
+        call: http.post
         args:
-          parent: projects/onboarding-de-willem-499614/locations/europe-west1/repositories/willem-meteo-dataform
+          url: ${"https://dataform.googleapis.com/v1beta1/projects/onboarding-de-willem-499614/locations/europe-west1/repositories/willem-meteo-dataform/workflowInvocations"}
+          auth:
+            type: OAuth2
           body:
-            compilationResult: ${compilation_result.name}
+            compilationResult: ${compilation_result.body.name}
         result: invocation_result
 
     - done:
