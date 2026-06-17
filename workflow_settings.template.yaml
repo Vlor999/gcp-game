@@ -1,0 +1,3 @@
+defaultProjectLocator: ${PROJECT_ID}
+defaultLocation: ${REGION}
+defaultDatasetLocator: ${BQ_SILVER_DATASET}

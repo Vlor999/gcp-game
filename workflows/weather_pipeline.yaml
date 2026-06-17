@@ -7,41 +7,21 @@ main:
           body: {}
         result: ingestion_result
 
-    - build_silver:
-        call: googleapis.bigquery.v2.jobs.query
+    - create_compilation:
+        call: googleapis.dataform.v1beta1.projects.locations.repositories.compilationResults.create
         args:
-          projectId: onboarding-de-willem-499614
+          parent: projects/onboarding-de-willem-499614/locations/europe-west1/repositories/willem-meteo-dataform
           body:
-            useLegacySql: false
-            query: |
-              CREATE OR REPLACE TABLE `onboarding-de-willem-499614.willem_silver.station_weather` AS
-              SELECT
-                LOWER(REGEXP_REPLACE(stop_name, r'[^a-zA-Z0-9]+', '_')) AS id,
-                timestamp AS time,
-                temperature,
-                snowfall AS snow,
-                wind_speed AS wind
-              FROM `onboarding-de-willem-499614.willem_bronze.stations_weather_raw`
-              QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY stop_name, timestamp
-                ORDER BY level DESC
-              ) = 1;
+            gitCommitish: willem
+        result: compilation_result
 
-    - build_gold:
-        call: googleapis.bigquery.v2.jobs.query
+    - run_dataform:
+        call: googleapis.dataform.v1beta1.projects.locations.repositories.workflowInvocations.create
         args:
-          projectId: onboarding-de-willem-499614
+          parent: projects/onboarding-de-willem-499614/locations/europe-west1/repositories/willem-meteo-dataform
           body:
-            useLegacySql: false
-            query: |
-              CREATE OR REPLACE TABLE `onboarding-de-willem-499614.willem_gold.summary` AS
-              SELECT
-                time,
-                COUNTIF(temperature < -5.0 OR temperature > 20.0) AS temperature_crisis_count,
-                COUNTIF(snow > 5.0) AS snow_crisis_count,
-                COUNTIF(wind > 100.0) AS wind_crisis_count
-              FROM `onboarding-de-willem-499614.willem_silver.station_weather`
-              GROUP BY time;
+            compilationResult: ${compilation_result.name}
+        result: invocation_result
 
     - done:
-        return: "Pipeline completed"
+        return: "Pipeline completed via Dataform"

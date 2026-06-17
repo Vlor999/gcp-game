@@ -76,6 +76,8 @@ jobs:
             echo "AR_REPO=${PREFIX}-docker"
             echo "JOB_NAME=${PREFIX}-ingest"
             echo "WORKFLOW_NAME=${PREFIX}-pipeline"
+            echo "BRANCH_NAME=${RAW_NAME}"
+            echo "DATAFORM_REPO=${PREFIX}-dataform"
             echo "BQ_BRONZE_DATASET=${NAME_UNDERSCORE}_bronze"
             echo "BQ_SILVER_DATASET=${NAME_UNDERSCORE}_silver"
             echo "BQ_GOLD_DATASET=${NAME_UNDERSCORE}_gold"
@@ -85,6 +87,7 @@ jobs:
             echo "CICD_SA=${PREFIX}-cicd@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
             echo "WORKFLOW_SA=${PREFIX}-workflow@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"
           } >> "$GITHUB_ENV"
+
 
           {
             echo "cicd_sa=${PREFIX}-cicd@${RESOLVED_PROJECT_ID}.iam.gserviceaccount.com"

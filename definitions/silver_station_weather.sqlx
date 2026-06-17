@@ -1,0 +1,18 @@
+config {
+  type: "table",
+  schema: "willem_silver",
+  name: "station_weather",
+  description: "Nettoyage et dédoublage des données météo"
+}
+
+SELECT
+  LOWER(REGEXP_REPLACE(stop_name, r'[^a-zA-Z0-9]+', '_')) AS id,
+  timestamp AS time,
+  temperature,
+  snowfall AS snow,
+  wind_speed AS wind
+FROM `onboarding-de-willem-499614.willem_bronze.stations_weather_raw`
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY stop_name, timestamp
+  ORDER BY level DESC
+) = 1
