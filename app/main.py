@@ -7,8 +7,15 @@ from google.cloud import bigquery
 
 
 PROJECT_ID = os.environ["PROJECT_ID"]
-BQ_DATASET = os.environ.get("BQ_BRONZE_DATASET", "willem_bronze")
-BQ_TABLE = os.environ.get("BQ_STATIONS_WEATHER_RAW_TABLE", "stations_weather_raw")
+
+# Support both the onboarding variable names and the generic fallback names
+# used by local runs / existing Cloud Run job deployments.
+BQ_DATASET = os.environ.get("BQ_BRONZE_DATASET") or os.environ.get(
+    "BQ_DATASET", "willem_bronze"
+)
+BQ_TABLE = os.environ.get("BQ_STATIONS_WEATHER_RAW_TABLE") or os.environ.get(
+    "BQ_TABLE", "stations_weather_raw"
+)
 
 CITY = os.environ.get("CITY", "Paris")
 LAT = float(os.environ.get("LAT", "48.8566"))
