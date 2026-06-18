@@ -105,13 +105,19 @@ Pour isoler les données de chaque utilisateur tout en conservant l'architecture
 
 ### 3.2 Créer les datasets (Bronze, Silver, Gold)
 
-Créez les trois datasets dans votre région cible :
+Créez les trois datasets dans votre localisation BigQuery cible :
 
 ```bash
 bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_BRONZE_DATASET"
 bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_SILVER_DATASET"
 bq --location="$BQ_LOCATION" mk --dataset "$PROJECT_ID:$BQ_GOLD_DATASET"
 ```
+
+Important :
+
+- `BQ_LOCATION` est la localisation BigQuery des datasets. Dans ce projet, utilisez `EU`.
+- `REGION` est la région des services GCP comme Cloud Run, Workflows et le dépôt Dataform. Dans ce projet, utilisez `europe-west1`.
+- `EU` et `europe-west1` ne sont pas interchangeables. Si vos datasets sont créés en `EU`, Dataform doit aussi exécuter ses requêtes BigQuery en `EU`.
 
 ### 3.3 Créer les tables de la couche Bronze
 
@@ -343,7 +349,17 @@ git commit -m "feat: use Dataform for SQL transformations and orchestrate weathe
 git push -u origin "$NAME"
 ```
 
-L'intégration continue va automatiquement configurer le Job Cloud Run et déployer le fichier d'orchestration dans GCP Workflows.
+L'intégration continue va automatiquement :
+
+1. construire et pousser une nouvelle image Docker ;
+2. créer ou mettre à jour le Job Cloud Run ;
+3. injecter les variables d'environnement du job côté GCP ;
+4. rendre puis déployer le fichier d'orchestration dans GCP Workflows.
+
+Important :
+
+- `gcloud workflows run ...` n'utilise pas votre `.env` local. Cette commande exécute les ressources déjà déployées sur GCP.
+- Si vous modifiez le code Python d'ingestion, les fichiers `.sqlx`, `workflow_settings.yaml` ou les templates de workflow, il faut refaire un `git push` pour que GitHub Actions reconstruise l'image et redéploie les ressources.
 
 ---
 
@@ -363,6 +379,11 @@ Ce workflow effectue désormais les actions suivantes :
 2. Interroge l'API Dataform pour compiler vos scripts `.sqlx` présents sur votre branche Git.
 3. Exécute le graphe de transformation SQL (Dataform va automatiquement créer la table **Silver** avec les filtres de nettoyage, puis la table **Gold** avec les KPI de crise).
 
+Important :
+
+- Le workflow GCP déclenche Dataform mais n'attend pas explicitement la fin de l'exécution Dataform avant de se terminer.
+- Si la table Bronze est alimentée mais que Silver/Gold restent vides après quelques minutes, allez vérifier l'invocation Dataform dans la console GCP ou via le CLI.
+
 ### 11.2 Valider le flux de données dans BigQuery
 
 Vérifiez le bon fonctionnement de l'ensemble de la chaîne de données :
@@ -378,7 +399,39 @@ bq query --use_legacy_sql=false "SELECT COUNT(*) as count FROM \`${PROJECT_ID}.$
 bq query --use_legacy_sql=false "SELECT * FROM \`${PROJECT_ID}.${BQ_GOLD_DATASET}.${BQ_SUMMARY_TABLE}\` ORDER BY time DESC LIMIT 10"
 ```
 
-### 11.3 Visualiser sur un Tableau de Bord (Looker Studio)
+### 11.3 Diagnostiquer un échec Dataform
+
+Si Bronze contient bien des lignes mais que Silver ou Gold restent vides, commencez par vérifier les erreurs Dataform :
+
+```bash
+gcloud dataform workflow-invocations list \
+  --project="$PROJECT_ID" \
+  --location="$REGION" \
+  --repository="$DATAFORM_REPO"
+```
+
+Puis inspectez l'invocation la plus récente :
+
+```bash
+gcloud dataform workflow-invocations describe WORKFLOW_INVOCATION_ID \
+  --project="$PROJECT_ID" \
+  --location="$REGION" \
+  --repository="$DATAFORM_REPO"
+```
+
+Vérifications prioritaires :
+
+- Assurez-vous que `workflow_settings.yaml` a bien `defaultLocation: EU` si vos datasets BigQuery ont été créés en `EU`.
+- Assurez-vous que le dépôt Dataform est connecté à GitHub sur la bonne branche (`$NAME`) et que les fichiers générés `workflow_settings.yaml`, `definitions/silver_station_weather.sqlx` et `definitions/gold_summary.sqlx` ont bien été commités et poussés.
+- Si Bronze écrit dans le mauvais dataset, inspectez la configuration réellement déployée du job Cloud Run :
+
+```bash
+gcloud run jobs describe "$JOB_NAME" \
+  --region="$REGION" \
+  --project="$PROJECT_ID"
+```
+
+### 11.4 Visualiser sur un Tableau de Bord (Looker Studio)
 
 Connectez-vous à Looker Studio, créez une source de données BigQuery pointant sur votre table Gold (`onboarding-de-willem-xxxxxx.willem_gold.summary`) et configurez vos rapports météo.
 
