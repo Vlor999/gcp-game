@@ -431,7 +431,7 @@ gcloud run jobs describe "$JOB_NAME" \
   --project="$PROJECT_ID"
 ```
 
-### 11.4 Visualiser sur un Tableau de Bord (Looker Studio)
+### 11.4 Visualiser sur un Tableau de Bord Data studio (nouveau nom de Looker Studio)
 
 Connectez-vous à Looker Studio, créez une source de données BigQuery pointant sur votre table Gold (`onboarding-de-willem-xxxxxx.willem_gold.summary`) et configurez vos rapports météo.
 
