@@ -60,7 +60,7 @@ def fetch_weather() -> list[dict]:
 
     current = payload["current"]
     timestamp = current.get("time") or dt.datetime.now(dt.timezone.utc).strftime(
-        "%Y-%m-%d %H:%M:%S"
+        "%Y-%m-%d %H:%M:%S" 
     )
 
     return [
